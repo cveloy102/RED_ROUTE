@@ -52,7 +52,14 @@ public partial class MainWindow : Window
         SearchPopup.IsOpen = true;
     }
     private void Domain_GotFocus(object sender, KeyboardFocusChangedEventArgs e) => ShowSuggestions();
-    private void Domain_MouseDown(object sender, MouseButtonEventArgs e) => ShowSuggestions();
+    private void Domain_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        // Open after TextBox has processed the click and acquired keyboard focus.
+        Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
+        {
+            if (DomainInput.IsKeyboardFocusWithin) ShowSuggestions();
+        }));
+    }
     private void Domain_TextChanged(object sender, TextChangedEventArgs e)
     {
         if (IsLoaded && (DomainInput.IsKeyboardFocusWithin || smoke)) ShowSuggestions();
@@ -72,7 +79,7 @@ public partial class MainWindow : Window
     }
     private void Suggestions_KeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Escape) { SearchPopup.IsOpen = false; DomainInput.Focus(); e.Handled = true; }
+        if (e.Key == Key.Escape) { DomainInput.Focus(); SearchPopup.IsOpen = false; e.Handled = true; }
         else if (e.Key == Key.Enter && Suggestions.SelectedItem is SuggestionRow row) { e.Handled = true; Suggestion_Click(new Button { DataContext = row }, new RoutedEventArgs()); }
     }
     public MainWindow(ClientSettings settings, bool smoke, bool preview = false)
@@ -82,6 +89,11 @@ public partial class MainWindow : Window
         SourceInitialized += (_, _) => WindowAppearance.Apply(this);
         tray = new Forms.NotifyIcon { Text = "RED_ROUTE · VPN выключен", Icon = TrayIcon.Create(RouteMode.Off, ConnectionPhase.Off), Visible = !smoke };
         tray.DoubleClick += (_, _) => Dispatcher.Invoke(OpenWindow);
+        PreviewMouseDown += (_, _) =>
+        {
+            if (!DomainInput.IsMouseOver && !SearchPopup.IsMouseOver && !SearchPopup.Child.IsMouseOver) SearchPopup.IsOpen = false;
+        };
+        Deactivated += (_, _) => SearchPopup.IsOpen = false;
         UpdateLists(); UpdateModeButtons(); ShowPage("home");
         StartupCheck.IsChecked = settings.StartWithWindows; FailoverCheck.IsChecked = settings.AutoFailover;
         UpdateTray();
@@ -100,6 +112,7 @@ public partial class MainWindow : Window
     private void TitleClose_Click(object sender, RoutedEventArgs e) => Close();
     private void ShowPage(string name)
     {
+        SearchPopup.IsOpen = false;
         HomePage.Visibility = name == "home" ? Visibility.Visible : Visibility.Collapsed;
         ProfilesPage.Visibility = name == "profiles" ? Visibility.Visible : Visibility.Collapsed;
         HelpPage.Visibility = name == "help" ? Visibility.Visible : Visibility.Collapsed;
