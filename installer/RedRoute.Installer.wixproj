@@ -1,6 +1,7 @@
 <Project Sdk="WixToolset.Sdk/6.0.2">
  <PropertyGroup>
-  <OutputName>RED_ROUTE-0.1.0-win-x64</OutputName><InstallerPlatform>x64</InstallerPlatform>
-  <DefineConstants>PublishDir=$(MSBuildThisFileDirectory)..\artifacts\publish;$(DefineConstants)</DefineConstants>
+  <OutputName>RED_ROUTE-$(Version)-win-x64</OutputName><InstallerPlatform>x64</InstallerPlatform>
+  <DefineConstants>PublishDir=$(MSBuildThisFileDirectory)..\artifacts\publish;ProductVersion=$(Version);$(DefineConstants)</DefineConstants>
  </PropertyGroup>
+ <ItemGroup><PackageReference Include="WixToolset.UI.wixext" Version="6.0.2"/></ItemGroup>
 </Project>

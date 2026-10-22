@@ -300,7 +300,7 @@ public partial class MainWindow : Window
         {
             var report = new
             {
-                App = "RED_ROUTE", Version = "0.1.0", Time = DateTimeOffset.Now, OS = Environment.OSVersion.VersionString,
+                App = "RED_ROUTE", Version = "0.1.1", Time = DateTimeOffset.Now, OS = Environment.OSVersion.VersionString,
                 Architecture = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString(),
                 Status = status, Profiles = settings.Profiles.Select((p, i) => new { Position = i + 1, p.Name, Protocol = ConfParser.Parse(p.Config).IsAmnezia ? "AmneziaWG" : "WireGuard" }),
                 SiteRuleCount = settings.Sites.Count, DatabaseUpdated = settings.DatabaseUpdated,

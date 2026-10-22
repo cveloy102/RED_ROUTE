@@ -1,9 +1,41 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
- <Package Name="RED_ROUTE" Manufacturer="RED_ROUTE" Version="0.1.0" UpgradeCode="74D7C06B-A26A-4411-A111-92760468AA21" Scope="perMachine" Compressed="yes" Language="1049">
+ <Package Name="RED_ROUTE" Manufacturer="RED_ROUTE" Version="$(var.ProductVersion)" UpgradeCode="74D7C06B-A26A-4411-A111-92760468AA21" Scope="perMachine" Compressed="yes" Language="1049" Codepage="1251">
   <SummaryInformation Description="RED_ROUTE — VPN-клиент для Windows 10 и 11"/>
   <MajorUpgrade DowngradeErrorMessage="Уже установлена более новая версия RED_ROUTE." Schedule="afterInstallInitialize"/>
   <MediaTemplate EmbedCab="yes" CompressionLevel="high"/>
   <Icon Id="RedRouteIcon" SourceFile="..\src\RedRoute.App\Assets\RedRoute.ico"/><Property Id="ARPPRODUCTICON" Value="RedRouteIcon"/>
+  <Property Id="LAUNCHREDROUTE" Value="1"/>
+  <EnsureTable Id="ControlCondition"/>
+  <CustomAction Id="OpenRedRoute" Directory="INSTALLFOLDER" ExeCommand="&quot;[INSTALLFOLDER]RED_ROUTE.exe&quot;" Execute="immediate" Impersonate="yes" Return="asyncNoWait"/>
+  <UI>
+   <UIRef Id="WixUI_Common"/>
+   <DialogRef Id="ErrorDlg"/><DialogRef Id="FilesInUse"/><DialogRef Id="MsiRMFilesInUse"/><DialogRef Id="FatalError"/><DialogRef Id="UserExit"/>
+   <TextStyle Id="InstallerNormal" FaceName="Segoe UI" Size="10"/>
+   <TextStyle Id="InstallerTitle" FaceName="Segoe UI" Size="18" Bold="yes"/>
+   <TextStyle Id="InstallerBrand" FaceName="Consolas" Size="11" Red="240" Green="68" Blue="62"/>
+   <TextStyle Id="WixUI_Font_Normal" FaceName="Segoe UI" Size="9"/><TextStyle Id="WixUI_Font_Title" FaceName="Segoe UI" Size="10" Bold="yes"/><TextStyle Id="WixUI_Font_Bigger" FaceName="Segoe UI" Size="12"/>
+   <Property Id="DefaultUIFont" Value="InstallerNormal"/>
+   <Dialog Id="RedRouteWelcome" Width="400" Height="255" Title="Установка RED_ROUTE" NoMinimize="yes">
+    <Control Id="Brand" Type="Text" X="24" Y="20" Width="350" Height="20" Text="{\InstallerBrand}RED_ROUTE"/>
+    <Control Id="Heading" Type="Text" X="24" Y="56" Width="350" Height="48" Text="{\InstallerTitle}Установка VPN-клиента"/>
+    <Control Id="Description" Type="Text" X="24" Y="116" Width="350" Height="48" Text="Установим RED_ROUTE и службу подключения. После завершения можно будет добавить файл .conf с настройками VPN."/>
+    <Control Id="Permissions" Type="Text" X="24" Y="175" Width="350" Height="28" Text="Для установки нужны права администратора. Windows может запросить подтверждение."/>
+    <Control Id="Install" Type="PushButton" X="210" Y="221" Width="80" Height="22" Default="yes" ElevationShield="yes" Text="Установить"><Publish Event="EndDialog" Value="Return"/></Control>
+    <Control Id="Cancel" Type="PushButton" X="300" Y="221" Width="76" Height="22" Cancel="yes" Text="Отмена"><Publish Event="EndDialog" Value="Exit"/></Control>
+   </Dialog>
+   <Dialog Id="RedRouteSuccess" Width="400" Height="255" Title="RED_ROUTE установлен" NoMinimize="yes">
+    <Control Id="Brand" Type="Text" X="24" Y="20" Width="350" Height="20" Text="{\InstallerBrand}RED_ROUTE"/>
+    <Control Id="Heading" Type="Text" X="24" Y="56" Width="350" Height="48" Text="{\InstallerTitle}Установка завершена"/>
+    <Control Id="Description" Type="Text" X="24" Y="114" Width="350" Height="44" Text="RED_ROUTE готов к работе. Откройте программу и добавьте файл .conf на вкладке «Профили»."/>
+    <Control Id="Launch" Type="CheckBox" X="24" Y="174" Width="350" Height="22" Property="LAUNCHREDROUTE" CheckBoxValue="1" Text="Открыть RED_ROUTE после установки"/>
+    <Control Id="Finish" Type="PushButton" X="280" Y="221" Width="96" Height="22" Default="yes" Cancel="yes" Text="Готово"><Publish Event="DoAction" Value="OpenRedRoute" Order="1" Condition="LAUNCHREDROUTE = 1"/><Publish Event="EndDialog" Value="Return" Order="2"/></Control>
+   </Dialog>
+   <InstallUISequence>
+    <Show Dialog="RedRouteWelcome" Before="ExecuteAction" Condition="NOT Installed"/>
+    <Show Dialog="RedRouteSuccess" OnExit="success" Condition="NOT (REMOVE ~= &quot;ALL&quot;)"/>
+   </InstallUISequence>
+   <AdminUISequence><Show Dialog="RedRouteSuccess" OnExit="success"/></AdminUISequence>
+  </UI>
   <Launch Condition="VersionNT64 AND WINDOWSBUILDNUMBER &gt;= 19045" Message="Нужна Windows 10 22H2 или Windows 11 (64-разрядная)."/>
   <Property Id="WINDOWSBUILDNUMBER"><RegistrySearch Id="WindowsBuild" Root="HKLM" Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion" Name="CurrentBuildNumber" Type="raw" Bitness="always64"/></Property>
   <StandardDirectory Id="ProgramFiles64Folder"><Directory Id="INSTALLFOLDER" Name="RED_ROUTE">

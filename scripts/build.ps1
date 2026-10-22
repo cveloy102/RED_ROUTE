@@ -19,7 +19,9 @@ try {
     if (!$SkipInstaller) {
         dotnet build installer/RedRoute.Installer.wixproj -c Release --nologo
         if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
-        $package = Get-ChildItem "$root/installer/bin" -Filter '*.msi' -Recurse | Select-Object -First 1
+        $version = ([xml](Get-Content -LiteralPath "$root/Directory.Build.props" -Raw)).Project.PropertyGroup.Version
+        $package = Get-Item -LiteralPath "$root/installer/bin/Release/RED_ROUTE-$version-win-x64.msi"
+        & "$PSScriptRoot/check-installer.ps1" -Path $package.FullName
         Copy-Item -LiteralPath $package.FullName -Destination "$root/artifacts/$($package.Name)" -Force
         Get-FileHash "$root/artifacts/$($package.Name)" -Algorithm SHA256 | Format-List
     }
