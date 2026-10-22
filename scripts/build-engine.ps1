@@ -4,7 +4,7 @@ $root = (Resolve-Path "$PSScriptRoot/..").Path
 $revision = '16724484cfa00d9b2c14d8280dc055564e2e12ba'
 $source = Join-Path $root 'vendor/amnezia-box'
 $destination = Join-Path $root 'artifacts/engine'
-New-Item -ItemType Directory -Force $source,$destination | Out-Null
+New-Item -ItemType Directory -Force $source,$destination,(Join-Path $root '.tools') | Out-Null
 if (!(Test-Path "$source/go.mod")) {
     $archive = Join-Path $root '.tools/amnezia-box.zip'
     Invoke-WebRequest "https://github.com/amnezia-vpn/amnezia-box/archive/$revision.zip" -OutFile $archive
