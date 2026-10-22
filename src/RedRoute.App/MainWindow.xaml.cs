@@ -36,6 +36,19 @@ public partial class MainWindow : Window
     private DateTimeOffset catalogAttempt = DateTimeOffset.MinValue;
     private sealed record SiteRow(SiteRule Rule) { public string Name => Rule.Name; public string Description => Rule.ServiceId == null ? Rule.IpRanges.Length > 0 ? "IP-адреса и подсети" : "Сайт и его поддомены" : $"Сервис · доменов: {Rule.Domains.Length}, подсетей: {Rule.IpRanges.Length}"; }
     private sealed record ProfileRow(VpnProfile Profile, int Position) { public string Title => $"{Position + 1}. {Profile.Name}"; public string Description => Position == 0 ? "Основной · подключаемся первым" : "Резерв · при недоступности предыдущего"; }
+    private void Domain_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (Suggestions == null) return;
+        var matches = catalog.Suggest(DomainInput.Text).Where(s => !settings.Sites.Any(old => old.ServiceId == s.ServiceId)).ToArray();
+        Suggestions.ItemsSource = matches;
+        Suggestions.Visibility = matches.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+    private async void Suggestion_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not SiteRule rule) return;
+        if (settings.Sites.Any(s => s.ServiceId == rule.ServiceId)) { Notice("Этот сервис уже есть в списке."); return; }
+        settings.Sites.Add(rule); DomainInput.Clear(); await ApplyAsync(); Notice($"Добавлен сервис «{rule.Name}» со связанными доменами.");
+    }
     public MainWindow(ClientSettings settings, bool smoke)
     {
         InitializeComponent(); this.settings = settings; this.smoke = smoke;
@@ -174,7 +187,12 @@ public partial class MainWindow : Window
         if (old != null) { foreach (Forms.ToolStripItem item in old.Items) item.Image?.Dispose(); old.Dispose(); }
     }
     private async void AddSite_Click(object sender, RoutedEventArgs e) => await AddDomainAsync();
-    private async void Domain_KeyDown(object sender, KeyEventArgs e) { if (e.Key == Key.Enter) { e.Handled = true; await AddDomainAsync(); } }
+    private async void Domain_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape) { Suggestions.Visibility = Visibility.Collapsed; e.Handled = true; }
+        else if (e.Key == Key.Down && Suggestions.Visibility == Visibility.Visible) { Suggestions.MoveFocus(new TraversalRequest(FocusNavigationDirection.First)); e.Handled = true; }
+        else if (e.Key == Key.Enter) { e.Handled = true; await AddDomainAsync(); }
+    }
     private async Task AddDomainAsync()
     {
         try
@@ -195,8 +213,8 @@ public partial class MainWindow : Window
     private async void RemoveSite_Click(object sender, RoutedEventArgs e) { if ((sender as FrameworkElement)?.DataContext is SiteRow row) { settings.Sites.Remove(row.Rule); await ApplyAsync(); } }
     private async void ImportProfile_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFileDialog { Filter = "Профиль AmneziaWG / WireGuard (*.conf)|*.conf", Multiselect = true };
-        if (dialog.ShowDialog(this) != true) return;
+        var dialog = new ProfilePicker(this);
+        if (!dialog.ShowDialog()) return;
         try
         {
             var imported = new List<VpnProfile>();
@@ -231,7 +249,8 @@ public partial class MainWindow : Window
     private async void RemoveProfile_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not ProfileRow row) return;
-        if (MessageBox.Show(this, $"Удалить профиль «{row.Profile.Name}»?", "RED_ROUTE", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
+        if (!AppDialog.Confirm(this, "Удалить профиль?", $"Профиль «{row.Profile.Name}» будет удалён из RED_ROUTE. Исходный файл .conf останется."
+            + (settings.Profiles.Count == 1 ? " Это последний профиль: VPN будет выключен." : row.Position == 0 ? " Основным станет следующий профиль в списке." : ""), "Удалить профиль")) return;
         settings.Profiles.Remove(row.Profile); if (settings.Profiles.Count == 0) settings.Mode = RouteMode.Off; await ApplyAsync();
     }
     private async void Failover_Click(object sender, RoutedEventArgs e) { settings.AutoFailover = FailoverCheck.IsChecked == true; await ApplyAsync(); }
@@ -309,7 +328,7 @@ public partial class MainWindow : Window
         {
             var report = new
             {
-                App = "RED_ROUTE", Version = "0.1.3", Time = DateTimeOffset.Now, OS = Environment.OSVersion.VersionString,
+                App = "RED_ROUTE", Version = "0.1.4", Time = DateTimeOffset.Now, OS = Environment.OSVersion.VersionString,
                 Architecture = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString(),
                 Status = status, Profiles = settings.Profiles.Select((p, i) => new { Position = i + 1, p.Name, Protocol = ConfParser.Parse(p.Config).IsAmnezia ? "AmneziaWG" : "WireGuard" }),
                 SiteRuleCount = settings.Sites.Count, DatabaseUpdated = settings.DatabaseUpdated,
@@ -331,10 +350,7 @@ public partial class MainWindow : Window
     }
     private string? Prompt(string title, string value)
     {
-        var dialog = new Window { Owner = this, Title = title, Width = 440, Height = 200, ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner };
-        var panel = new StackPanel { Margin = new Thickness(20) }; var input = new TextBox { Text = value }; var save = new Button { Content = "Сохранить", Margin = new Thickness(0, 16, 0, 0), IsDefault = true };
-        panel.Children.Add(input); panel.Children.Add(save); dialog.Content = panel; save.Click += (_, _) => dialog.DialogResult = true;
-        dialog.Loaded += (_, _) => { input.Focus(); input.SelectAll(); }; return dialog.ShowDialog() == true ? input.Text.Trim() : null;
+        return AppDialog.Prompt(this, title, value);
     }
     private void Window_Closing(object? sender, CancelEventArgs e) { if (!exiting) { e.Cancel = true; Hide(); } }
     private void Exit() { exiting = true; lifetime.Cancel(); timer.Stop(); tray.Visible = false; tray.Icon?.Dispose(); tray.Dispose(); Close(); System.Windows.Application.Current.Shutdown(); }
@@ -353,6 +369,27 @@ public partial class MainWindow : Window
             throw new InvalidOperationException("Advanced settings must be visible after opening");
         AdvancedPanel.Visibility = Visibility.Collapsed; MainScroll.ScrollToTop();
         UpdateLayout();
+        void Render(Window window, string name)
+        {
+            window.UpdateLayout();
+            var image = new RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, PixelFormats.Pbgra32); image.Render(window);
+            var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(image));
+            using var stream = File.Create(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", name + ".png")); png.Save(stream);
+        }
+        DomainInput.Text = "dis"; UpdateLayout();
+        if (Suggestions.Visibility != Visibility.Visible || !Suggestions.Items.Cast<SiteRule>().Any(s => s.ServiceId == "discord")) throw new InvalidOperationException("Service suggestions failed");
+        Render(this, "suggestions");
+        var suggested = Suggestions.Items.Cast<SiteRule>().First(s => s.ServiceId == "discord");
+        Suggestion_Click(new Button { DataContext = suggested }, new RoutedEventArgs());
+        if (settings.Sites.Count != 2 || settings.Sites.Last().ServiceId != "discord" || DomainInput.Text.Length != 0 || Suggestions.Visibility != Visibility.Collapsed) throw new InvalidOperationException("Service suggestion selection failed");
+        settings.Sites.RemoveAt(1); UpdateLists(); Feedback.Visibility = Visibility.Collapsed;
+        var sampleFolder = Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", "sample-profiles"); Directory.CreateDirectory(sampleFolder);
+        File.WriteAllText(Path.Combine(sampleFolder, "Основной.conf"), "# UI preview only; not a VPN profile");
+        var picker = new ProfilePicker(this, sampleFolder).PreviewWindow;
+        picker.Show(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle); Render(picker, "profile-import"); picker.Close();
+        var confirmation = new AppDialog(this, "Удалить профиль?"); confirmation.Describe("Профиль «Основной» будет удалён из RED_ROUTE. Исходный файл .conf останется.");
+        confirmation.AddActions("Удалить профиль", () => confirmation.Close(), false);
+        confirmation.Show(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle); Render(confirmation, "profile-delete"); confirmation.Close();
         foreach (var (name, page) in new[] { ("main", "home"), ("profiles", "profiles"), ("help", "help") })
         {
             ShowPage(page); UpdateLayout();
@@ -360,7 +397,7 @@ public partial class MainWindow : Window
             var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(image));
             using var stream = File.Create(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", name + ".png")); png.Save(stream);
         }
-        File.WriteAllText(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", "result.txt"), "PASS: native WPF rendering, domain normalization, invalid domain rejection. No service, recovery, or network commands executed.");
+        File.WriteAllText(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", "result.txt"), "PASS: native WPF rendering, domain normalization, invalid domain rejection, service suggestions/selection, themed import/deletion dialogs. No service, recovery, or network commands executed.");
         Exit();
     }
 }

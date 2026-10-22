@@ -6,6 +6,59 @@ using System.Text;
 using RedRoute.Core;
 using RedRoute.Platform;
 
+if (args.Contains("--routing-lab")) { await RoutingLab.RunAsync(); return; }
+if (args.Contains("--routing-audit"))
+{
+    var saved = SecureStore.Load(); var original = saved.Mode;
+    var snapshots = new Dictionary<RouteMode, Dictionary<string, string>>();
+    try
+    {
+        foreach (var mode in new[] { RouteMode.Off, RouteMode.Auto, RouteMode.On })
+        {
+            saved.Mode = mode;
+            if (!(await PipeProtocol.CallAsync(new("configure", saved))).Success) throw new IOException("Configure failed");
+            var ready = false;
+            for (var i = 0; i < 60; i++)
+            {
+                var s = (await PipeProtocol.CallAsync(new("status"))).Status;
+                if (s?.Mode == mode && (mode == RouteMode.Off ? s.Phase == ConnectionPhase.Off : s.Phase == ConnectionPhase.Connected)) { ready = true; break; }
+                await Task.Delay(1000);
+            }
+            if (!ready) throw new IOException("Requested mode did not become ready; audit aborted");
+            snapshots[mode] = new();
+            foreach (var url in new[] { "https://2ip.ru/", "https://api.ipify.org", "https://www.cloudflare.com/cdn-cgi/trace" })
+            {
+                using var handler = new SocketsHttpHandler { UseProxy = false, PooledConnectionLifetime = TimeSpan.Zero };
+                using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(25) };
+                var clock = Stopwatch.StartNew();
+                try
+                {
+                    var body = await client.GetStringAsync(url);
+                    var ips = System.Text.RegularExpressions.Regex.Matches(body, @"\b(?:\d{1,3}\.){3}\d{1,3}\b").Select(m => m.Value).Where(s => IPAddress.TryParse(s, out _)).Distinct().ToArray();
+                    snapshots[mode][url] = string.Join(",", ips);
+                    Console.WriteLine($"{mode}: {new Uri(url).Host}: {clock.ElapsedMilliseconds} ms; address count={ips.Length}");
+                    if (mode != RouteMode.Off && snapshots[RouteMode.Off].TryGetValue(url, out var baseline)) Console.WriteLine("Same public address as Off: " + (baseline == snapshots[mode][url]));
+                }
+                catch (HttpRequestException) { Console.WriteLine($"{mode}: {new Uri(url).Host}: HTTP failure after {clock.ElapsedMilliseconds} ms"); }
+                catch (OperationCanceledException) { Console.WriteLine($"{mode}: {new Uri(url).Host}: timeout"); }
+            }
+        }
+        foreach (var url in snapshots[RouteMode.Auto].Keys)
+            if (snapshots[RouteMode.On].TryGetValue(url, out var full)) Console.WriteLine($"Auto equals full VPN for {new Uri(url).Host}: {snapshots[RouteMode.Auto][url] == full}");
+    }
+    finally { saved.Mode = original; await PipeProtocol.CallAsync(new("configure", saved)); Console.WriteLine("Restored mode: " + original); }
+    return;
+}
+if (args.Contains("--inspect"))
+{
+    var saved = SecureStore.Load();
+    var current = (await PipeProtocol.CallAsync(new("status"))).Status;
+    Console.WriteLine($"Saved mode: {saved.Mode}; service mode: {current?.Mode}; phase: {current?.Phase}");
+    foreach (var site in saved.Sites)
+        Console.WriteLine($"Rule: {site.Name}; domains={site.Domains.Length}; networks={site.IpRanges.Length}; matches 2ip.ru={site.Domains.Any(d => d == "2ip.ru" || "2ip.ru".EndsWith("." + d))}");
+    Console.WriteLine("System HTTP proxy enabled: " + (Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Internet Settings", "ProxyEnable", 0)));
+    return;
+}
 // Explicit diagnostic: never creates a TUN or changes system routes. Does not print configuration or keys.
 bool realProfile = args.Contains("--saved-profile") || args.Contains("--installed-check") || args.Contains("--installed-auto-check");
 Console.WriteLine(args.Contains("--installed-check") || args.Contains("--installed-auto-check") ? "Installed tunnel check; original mode is restored in finally." : "Diagnostic mode: no TUN, no route changes.");

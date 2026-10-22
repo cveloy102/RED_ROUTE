@@ -12,6 +12,9 @@ Assert(Domains.Normalize("https://YouTube.COM/watch?v=x") == "youtube.com", "URL
 Reject(() => new ClientSettings { Profiles = null! }.Validate(), "Reject null IPC profile list");
 Reject(() => new ClientSettings { Sites = [new("bad", null!, [])] }.Validate(), "Reject null IPC domain list");
 Assert(new ServiceCatalog().Find("youtube.com")?.Domains.Contains("googlevideo.com") == true, "Bundled YouTube service includes playback domains");
+Assert(new ServiceCatalog().Suggest("dis").Any(s => s.ServiceId == "discord"), "Service suggestions accept a partial name");
+Assert(new ServiceCatalog().Suggest("DIS").Any(s => s.ServiceId == "discord"), "Service suggestions ignore case");
+Assert(new ServiceCatalog().Suggest("d").Count == 0 && new ServiceCatalog().Suggest("unknown-service-no-match").Count == 0, "Suggestions avoid empty and unrelated results");
 Assert(Domains.Normalize("пример.рф").StartsWith("xn--"), "IDN normalization");
 Reject(() => Domains.Normalize("localhost"), "Reject single-label hostname");
 Reject(() => Domains.Normalize("https://user:secret@example.org"), "Reject URL credentials");
@@ -27,6 +30,9 @@ Assert(ConfParser.Parse(config.Replace("192.0.2.1:51820", "[2001:db8::1]:51820")
 var settings = new ClientSettings { Mode = RouteMode.Auto, Profiles = [new(Guid.NewGuid(), "Основной", config), new(Guid.NewGuid(), "Резерв", config)], Sites = [new("Example", ["example.org"], [])] };
 var generated = CoreConfiguration.Build(parsed, settings, true, 12345, "test-password");
 Assert(generated["route"]!["final"]!.GetValue<string>() == "direct", "Auto uses direct default");
+var physicalDns = CoreConfiguration.Build(parsed, settings, true, 12345, "test-password", "192.0.2.53", "Ethernet");
+Assert(physicalDns["dns"]!["servers"]![0]!["type"]!.GetValue<string>() == "udp" && physicalDns["dns"]!["servers"]![0]!["server"]!.GetValue<string>() == "192.0.2.53", "Direct DNS uses captured upstream instead of TUN resolver enumeration");
+Assert(physicalDns["dns"]!["servers"]![0]!["bind_interface"]!.GetValue<string>() == "Ethernet", "Direct DNS is bound to the original network adapter");
 Assert(generated["endpoints"]![0]!["useIntegratedTun"]!.GetValue<bool>() == false, "AWG probe never installs a second system tunnel");
 Assert(generated["route"]!["rules"]![1]!["outbound"]!.GetValue<string>() == "vpn", "Health proxy always traverses VPN");
 Assert(generated["route"]!["rules"]![0]!["action"]!.GetValue<string>() == "resolve", "AWG health resolves DNS before userspace dialing");
@@ -59,7 +65,7 @@ foreach (var (name, awg, mode, capture) in new[] { ("awg-auto", true, RouteMode.
 {
     settings.Mode = mode;
     var profile = awg ? parsed : ConfParser.Parse(config.Split('\n').Where(l => !ConfParser.AwgFields.Any(k => l.StartsWith(k + " ="))).Aggregate("", (a, b) => a + b + "\n"));
-    var path = Path.Combine(destination, name + ".json"); await File.WriteAllTextAsync(path, CoreConfiguration.Build(profile, settings, capture, 12345, "synthetic-test-only").ToJsonString());
+    var path = Path.Combine(destination, name + ".json"); await File.WriteAllTextAsync(path, CoreConfiguration.Build(profile, settings, capture, 12345, "synthetic-test-only", "192.0.2.53", "Ethernet").ToJsonString());
     var executable = Path.Combine(Environment.CurrentDirectory, "artifacts", "engine", "amnezia-box.exe");
     if (File.Exists(executable))
     {

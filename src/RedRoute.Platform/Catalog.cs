@@ -43,6 +43,16 @@ public sealed class ServiceCatalog
         if (Aliases.TryGetValue(domain, out var id) && services.TryGetValue(id, out var rule)) return rule;
         return services.Values.FirstOrDefault(s => s.Domains.Any(d => domain == d || domain.EndsWith("." + d, StringComparison.Ordinal)));
     }
+    public IReadOnlyList<SiteRule> Suggest(string query)
+    {
+        query = query.Trim();
+        if (query.Length < 2 || query.Length > 200) return [];
+        return services.Values.Where(s => s.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
+                || s.ServiceId?.Contains(query, StringComparison.OrdinalIgnoreCase) == true
+                || s.Domains.Any(d => d.StartsWith(query, StringComparison.OrdinalIgnoreCase)))
+            .OrderByDescending(s => s.Name.StartsWith(query, StringComparison.OrdinalIgnoreCase))
+            .ThenBy(s => s.Name, StringComparer.CurrentCultureIgnoreCase).Take(6).ToArray();
+    }
     public async Task RefreshAsync(IEnumerable<SiteRule> selected, CancellationToken token)
     {
         using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(25) };

@@ -31,7 +31,8 @@ public sealed class TunnelEngine : ITunnelEngine
             endpointAddress = addresses.OrderBy(a => a.AddressFamily == AddressFamily.InterNetwork ? 0 : 1).FirstOrDefault() ?? throw new IOException("Не найден адрес сервера.");
         }
         parsed.Peer["Endpoint"] = endpointAddress.AddressFamily == AddressFamily.InterNetworkV6 ? $"[{endpointAddress}]:{port}" : $"{endpointAddress}:{port}";
-        var json = CoreConfiguration.Build(parsed, settings, captureTraffic, healthPort, password).ToJsonString();
+        var directDns = DirectNetwork.Dns();
+        var json = CoreConfiguration.Build(parsed, settings, captureTraffic, healthPort, password, directDns?.Server, directDns?.Interface).ToJsonString();
         await File.WriteAllTextAsync(runtimeFile, json, token);
         var info = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(executable)!, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true };
         info.ArgumentList.Add("run"); info.ArgumentList.Add("-c"); info.ArgumentList.Add(runtimeFile);

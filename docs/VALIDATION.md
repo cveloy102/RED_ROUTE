@@ -43,3 +43,23 @@ WPF smoke validation checks that the expanded settings panel is fully visible
 after opening; installer welcome/progress/completion are rendered separately.
 Windows 10, network-disruption/failover live tests and forced-process crash recovery
 remain unverified; the earlier checklist still applies to those scenarios.
+
+## Local acceptance for 0.1.4
+
+- 38 automated checks pass, including partial/case-insensitive service suggestions,
+  DNS adapter binding and generated AWG/WireGuard schema checks in the official core.
+- Isolated WPF smoke verifies `dis` → Discord → adding the full service, validation,
+  scrolling, and renders themed import/deletion dialogs with synthetic profile names.
+- MSI upgrade completed with code 0; installed application and service are 0.1.4.
+- A controlled comparison reproduced recursive local-DNS queries through TUN.
+  HTTPS requests took 5362/5210 ms with system-DNS enumeration versus 372/208 ms
+  with explicit physical-adapter DNS. The installed-service comparison subsequently
+  measured Auto at 713/465 ms and Off at 694/556 ms for the same two destinations.
+  These are request-latency observations, not bandwidth or router throughput benchmarks.
+- On changed public egress; unlisted Auto destinations retained Off egress. A temporary
+  selected diagnostic domain changed to VPN egress while an unlisted domain stayed
+  direct, with Connected health after 12 seconds. Temporary rules were removed and
+  the user's current Off mode restored. Profiles and the user's service list remain.
+- The reported 2ip.ru routing symptom was traced by the user to router configuration.
+  This site's automated HTTP request was rejected, so no successful 2ip.ru page
+  acceptance is claimed.

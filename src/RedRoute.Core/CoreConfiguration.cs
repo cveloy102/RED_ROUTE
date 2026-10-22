@@ -4,7 +4,7 @@ namespace RedRoute.Core;
 
 public static class CoreConfiguration
 {
-    public static JsonObject Build(ParsedProfile profile, ClientSettings settings, bool captureTraffic, int healthPort, string password)
+    public static JsonObject Build(ParsedProfile profile, ClientSettings settings, bool captureTraffic, int healthPort, string password, string? directDnsServer = null, string? directInterface = null)
     {
         var (host, port) = profile.Endpoint;
         JsonObject peer = new()
@@ -76,12 +76,18 @@ public static class CoreConfiguration
             if (selected.Length > 0) dnsRules.Add(new JsonObject { ["domain_suffix"] = Strings(selected), ["query_type"] = Strings(["A", "AAAA"]), ["server"] = "fakeip" });
             if (selected.Length > 0) dnsRules.Add(new JsonObject { ["domain_suffix"] = Strings(selected), ["server"] = "remote" });
         }
+        var localDns = new JsonObject { ["type"] = directDnsServer == null ? "local" : "udp", ["tag"] = "local" };
+        if (directDnsServer != null)
+        {
+            localDns["server"] = directDnsServer;
+            if (!string.IsNullOrWhiteSpace(directInterface)) localDns["bind_interface"] = directInterface;
+        }
         return new JsonObject
         {
             ["log"] = new JsonObject { ["level"] = "warn", ["timestamp"] = true },
             ["dns"] = new JsonObject
             {
-                ["servers"] = new JsonArray(new JsonObject { ["type"] = "local", ["tag"] = "local" },
+                ["servers"] = new JsonArray(localDns,
                     new JsonObject { ["type"] = "https", ["tag"] = "remote", ["server"] = "1.1.1.1", ["path"] = "/dns-query", ["detour"] = "vpn" },
                     new JsonObject { ["type"] = "fakeip", ["tag"] = "fakeip", ["inet4_range"] = "198.18.0.0/15", ["inet6_range"] = "fc00::/18" }),
                 ["rules"] = dnsRules, ["final"] = settings.Mode == RouteMode.On ? "remote" : "local", ["independent_cache"] = true,
