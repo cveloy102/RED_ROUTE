@@ -16,8 +16,26 @@ Assert(new ServiceCatalog().Suggest("dis").Any(s => s.ServiceId == "discord"), "
 Assert(new ServiceCatalog().Suggest("DIS").Any(s => s.ServiceId == "discord"), "Service suggestions ignore case");
 Assert(new ServiceCatalog().Suggest("d").Count > 0 && new ServiceCatalog().Suggest("unknown-service-no-match").Count == 0, "Suggestions accept one character and reject unrelated results");
 var searchCatalog = new ServiceCatalog();
-Assert(searchCatalog.Search("").Count > 20000 && searchCatalog.Suggest("").Count >= 300, "Empty search exposes the complete bundled service/domain catalogue");
+Assert(searchCatalog.Search("").Count > 15000 && searchCatalog.Suggest("").Count >= 300, "Empty search exposes the visible bundled service/domain catalogue");
 Assert(searchCatalog.Search("dis").Any(s => !s.IsService && s.Title == "discord.com") && searchCatalog.Search("dis").Any(s => s.IsService && s.Rule.ServiceId == "discord"), "Partial domain search shows both the domain and complete service");
+Assert(!searchCatalog.Search("").Any(s => s.Rule.ServiceId == "category-porn") && searchCatalog.Search("pornhub").Count == 0 && searchCatalog.Find("pornhub.com") == null, "Adult services and their domains are absent from every catalogue lookup");
+var catalogFixture = Path.Combine(Path.GetTempPath(), "redroute-catalog-" + Guid.NewGuid() + ".json");
+try
+{
+    File.WriteAllText(catalogFixture, System.Text.Json.JsonSerializer.Serialize(new
+    {
+        Updated = DateTimeOffset.UtcNow, Commit = "test",
+        Services = new Dictionary<string, SiteRule>
+        {
+            ["category-porn"] = new("18+", ["adult-fixture.example"], [], "category-porn"),
+            ["general-fixture"] = new("General", ["safe-fixture.example", "pornhub.com", "img.adult-fixture.example"], [], "general-fixture")
+        }, HiddenDomains = new[] { "previous-adult-fixture.example" }
+    }));
+    var filteredCache = new ServiceCatalog(catalogFixture);
+    Assert(filteredCache.Search("adult-fixture").Count == 0 && filteredCache.Search("pornhub").Count == 0 && filteredCache.Suggest("18+").Count == 0, "Legacy cached adult categories and overlapping subdomains cannot restore hidden suggestions");
+    Assert(filteredCache.Find("safe-fixture.example")?.Domains.SequenceEqual(new[] { "safe-fixture.example" }) == true && filteredCache.Suggest("dis").Any(s => s.ServiceId == "discord"), "Filtering cached categories preserves ordinary services and domains");
+}
+finally { File.Delete(catalogFixture); }
 Assert(Domains.Normalize("пример.рф").StartsWith("xn--"), "IDN normalization");
 Reject(() => Domains.Normalize("localhost"), "Reject single-label hostname");
 Reject(() => Domains.Normalize("https://user:secret@example.org"), "Reject URL credentials");

@@ -13,17 +13,22 @@ public sealed class ServiceCatalog
 {
     private sealed record Entry(string id, string name, string src);
     private sealed record CatalogRoot(int version, Entry[] services);
-    private sealed record CachedCatalog(DateTimeOffset Updated, string Commit, Dictionary<string, SiteRule> Services);
+    private sealed record CachedCatalog(DateTimeOffset Updated, string Commit, Dictionary<string, SiteRule> Services, string[]? HiddenDomains = null);
     private sealed record SeedService(string id, string name, string[] domains);
     private sealed record Seed(SeedService[] services);
-    private readonly string cachePath = Path.Combine(SecureStore.UserDirectory, "catalog.json");
+    private readonly string cachePath;
+    private HashSet<string> hiddenDomains = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, SiteRule> services = new(StringComparer.OrdinalIgnoreCase);
     private CatalogChoice[]? searchIndex;
     public DateTimeOffset? Updated { get; private set; }
     private static readonly Dictionary<string, string> Aliases = new(StringComparer.OrdinalIgnoreCase)
     { ["youtube.com"] = "youtube", ["youtu.be"] = "youtube", ["t.me"] = "telegram", ["telegram.org"] = "telegram", ["chatgpt.com"] = "openai", ["openai.com"] = "openai", ["discord.com"] = "discord", ["github.com"] = "github" };
-    public ServiceCatalog()
+    public ServiceCatalog(string? cacheFile = null)
     {
+        cachePath = cacheFile ?? Path.Combine(SecureStore.UserDirectory, "catalog.json");
+        using (var stream = typeof(ServiceCatalog).Assembly.GetManifestResourceStream("RedRoute.Platform.Resources.hidden-domains.txt")!)
+        using (var reader = new StreamReader(stream))
+            AddHiddenDomains(hiddenDomains, reader.ReadToEnd().Split('\n'));
         using (var stream = typeof(ServiceCatalog).Assembly.GetManifestResourceStream("RedRoute.Platform.Resources.seed.json"))
         {
             var seed = stream == null ? null : JsonSerializer.Deserialize<Seed>(stream);
@@ -39,6 +44,9 @@ public sealed class ServiceCatalog
                 var cached = JsonSerializer.Deserialize<CachedCatalog>(File.ReadAllText(cachePath));
                 if (cached?.Services != null)
                 {
+                    AddHiddenDomains(hiddenDomains, cached.HiddenDomains ?? []);
+                    foreach (var item in cached.Services.Values.Where(s => IsHiddenService(s.ServiceId ?? "", s.Name)))
+                        AddHiddenDomains(hiddenDomains, item.Domains);
                     foreach (var item in cached.Services)
                     {
                         new ClientSettings { Sites = [item.Value] }.Validate();
@@ -49,6 +57,35 @@ public sealed class ServiceCatalog
             }
         }
         catch (Exception ex) when (ex is IOException or JsonException or FormatException or ArgumentException) { }
+        FilterCatalog(services, hiddenDomains);
+    }
+    private static bool IsHiddenService(string id, string name) =>
+        new[] { "porn", "adult", "nsfw", "hentai", "18+" }.Any(marker => id.Contains(marker, StringComparison.OrdinalIgnoreCase) || name.Contains(marker, StringComparison.OrdinalIgnoreCase));
+    private static void AddHiddenDomains(HashSet<string> destination, IEnumerable<string> values)
+    {
+        foreach (var value in values)
+            try { destination.Add(Domains.Normalize(value.Trim())); }
+            catch (Exception ex) when (ex is FormatException or ArgumentException) { }
+    }
+    private static bool IsHiddenDomain(string domain, HashSet<string> excluded)
+    {
+        for (var suffix = domain; ;)
+        {
+            if (excluded.Contains(suffix)) return true;
+            var dot = suffix.IndexOf('.');
+            if (dot < 0) return false;
+            suffix = suffix[(dot + 1)..];
+        }
+    }
+    private static void FilterCatalog(Dictionary<string, SiteRule> catalog, HashSet<string> excluded)
+    {
+        foreach (var (id, rule) in catalog.ToArray())
+        {
+            if (IsHiddenService(id, rule.Name)) { catalog.Remove(id); continue; }
+            var visible = rule.Domains.Where(d => !IsHiddenDomain(d, excluded)).ToArray();
+            if (visible.Length == 0 && rule.IpRanges.Length == 0) catalog.Remove(id);
+            else catalog[id] = rule with { Domains = visible };
+        }
     }
     public SiteRule? Find(string domain)
     {
@@ -88,19 +125,32 @@ public sealed class ServiceCatalog
         if (catalog.version != 1 || catalog.services.Length > 2000) throw new IOException("Неизвестный формат базы.");
         var ids = Aliases.Values.Concat(selected.Where(s => s.ServiceId != null).Select(s => s.ServiceId!)).Distinct();
         var next = new Dictionary<string, SiteRule>(services, StringComparer.OrdinalIgnoreCase);
+        var nextHidden = new HashSet<string>(hiddenDomains, StringComparer.OrdinalIgnoreCase);
+        // Refresh the exclusion list too, before merging any updated services.
+        foreach (var item in catalog.services.Where(s => IsHiddenService(s.id, s.name)))
+        {
+            ValidateSource(item.src);
+            var text = System.Text.Encoding.UTF8.GetString(await Download(client, prefix + item.src, 1000000, token));
+            AddHiddenDomains(nextHidden, ParseService(item.name, item.id, text.Split('\n')).Domains);
+        }
         foreach (var id in ids)
         {
             var item = catalog.services.FirstOrDefault(s => s.id == id);
-            if (item == null) continue;
-            if (item.src.Contains("..") || item.src.StartsWith('/') || item.src.Contains(':') || item.src.Contains('\\')) throw new IOException("Небезопасный путь базы.");
+            if (item == null || IsHiddenService(item.id, item.name)) continue;
+            ValidateSource(item.src);
             var text = System.Text.Encoding.UTF8.GetString(await Download(client, prefix + item.src, 1000000, token));
             next[id] = ParseService(item.name, id, text.Split('\n'));
         }
-        var snapshot = new CachedCatalog(DateTimeOffset.UtcNow, sha, next);
-        Directory.CreateDirectory(SecureStore.UserDirectory);
+        FilterCatalog(next, nextHidden);
+        var snapshot = new CachedCatalog(DateTimeOffset.UtcNow, sha, next, nextHidden.ToArray());
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(cachePath))!);
         var tmp = cachePath + ".tmp";
         await File.WriteAllTextAsync(tmp, JsonSerializer.Serialize(snapshot), token); File.Move(tmp, cachePath, true);
-        services = next; searchIndex = null; Updated = snapshot.Updated;
+        services = next; hiddenDomains = nextHidden; searchIndex = null; Updated = snapshot.Updated;
+    }
+    private static void ValidateSource(string source)
+    {
+        if (source.Contains("..") || source.StartsWith('/') || source.Contains(':') || source.Contains('\\')) throw new IOException("Небезопасный путь базы.");
     }
     private static SiteRule ParseService(string name, string id, IEnumerable<string> values)
     {

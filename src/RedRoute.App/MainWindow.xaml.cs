@@ -94,6 +94,13 @@ public partial class MainWindow : Window
             if (!DomainInput.IsMouseOver && !SearchPopup.IsMouseOver && !SearchPopup.Child.IsMouseOver) SearchPopup.IsOpen = false;
         };
         Deactivated += (_, _) => SearchPopup.IsOpen = false;
+        LocationChanged += (_, _) => SearchPopup.IsOpen = false;
+        SizeChanged += (_, _) => SearchPopup.IsOpen = false;
+        MainScroll.ScrollChanged += (_, e) =>
+        {
+            // Scrolling the catalogue itself must keep it open; moving the page must dismiss it.
+            if (e.OriginalSource == MainScroll && (e.VerticalChange != 0 || e.HorizontalChange != 0)) SearchPopup.IsOpen = false;
+        };
         UpdateLists(); UpdateModeButtons(); ShowPage("home");
         StartupCheck.IsChecked = settings.StartWithWindows; FailoverCheck.IsChecked = settings.AutoFailover;
         UpdateTray();
@@ -430,7 +437,7 @@ public partial class MainWindow : Window
             using var stream = File.Create(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", name + ".png")); png.Save(stream);
         }
         DomainInput.Focus(); ShowSuggestions(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
-        if (!SearchPopup.IsOpen || Suggestions.Items.Count < 20000) throw new InvalidOperationException("Empty search must show the complete catalogue");
+        if (!SearchPopup.IsOpen || Suggestions.Items.Count < 15000) throw new InvalidOperationException("Empty search must show the visible catalogue");
         void RenderPopup(string name)
         {
             var popup = (FrameworkElement)SearchPopup.Child; popup.UpdateLayout();
@@ -438,6 +445,15 @@ public partial class MainWindow : Window
             var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(image)); using var output = File.Create(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", name + ".png")); png.Save(output);
         }
         RenderPopup("catalog-all");
+        Suggestions.ScrollIntoView(Suggestions.Items[100]); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+        if (!SearchPopup.IsOpen) throw new InvalidOperationException("Scrolling catalogue suggestions must keep the dropdown open");
+        MainScroll.Height = 250; UpdateLayout(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+        ShowSuggestions();
+        var previousOffset = MainScroll.VerticalOffset;
+        MainScroll.ScrollToVerticalOffset(previousOffset > 0 ? 0 : MainScroll.ScrollableHeight);
+        await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+        if (MainScroll.VerticalOffset == previousOffset || SearchPopup.IsOpen) throw new InvalidOperationException("Scrolling the page must dismiss the detached dropdown");
+        MainScroll.Height = double.NaN; MainScroll.ScrollToTop(); UpdateLayout(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
         DomainInput.Text = "dis"; await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
         if (!SearchPopup.IsOpen || !Suggestions.Items.Cast<SuggestionRow>().Any(s => s.Choice.IsService && s.Choice.Rule.ServiceId == "discord") || !Suggestions.Items.Cast<SuggestionRow>().Any(s => !s.Choice.IsService && s.Choice.Title == "discord.com")) throw new InvalidOperationException("Service/domain suggestions failed");
         RenderPopup("suggestions-popup");

@@ -44,6 +44,17 @@ def service(item):
 
 with ThreadPoolExecutor(max_workers=12) as workers:
     services = list(workers.map(service, catalog['services']))
-destination = Path(__file__).resolve().parent.parent / 'src/RedRoute.Platform/Resources/seed.json'
+resources = Path(__file__).resolve().parent.parent / 'src/RedRoute.Platform/Resources'
+destination = resources / 'seed.json'
+hidden_file = resources / 'hidden-domains.txt'
+def is_hidden(item):
+    return any(marker in (item['id'] + ' ' + item['name']).lower() for marker in ('porn', 'adult', 'nsfw', 'hentai', '18+'))
+
+hidden = set(hidden_file.read_text(encoding='utf-8').splitlines()) if hidden_file.exists() else set()
+hidden.update(domain for item in services if is_hidden(item) for domain in item['domains'] if '/' not in domain)
+services = [item for item in services if not is_hidden(item)]
+for item in services:
+    item['domains'] = [domain for domain in item['domains'] if not any('.'.join(domain.split('.')[i:]) in hidden for i in range(len(domain.split('.'))))]
+hidden_file.write_text('\n'.join(sorted(hidden)) + '\n', encoding='utf-8')
 destination.write_text(json.dumps({'commit': sha, 'services': services}, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
 print('Bundled services:', len(services), 'unique entries:', len({d for s in services for d in s['domains']}), 'largest service:', max(len(s['domains']) for s in services), 'commit:', sha)
