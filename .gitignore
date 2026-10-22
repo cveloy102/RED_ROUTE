@@ -1,0 +1,12 @@
+**/bin/
+**/obj/
+.tools/
+artifacts/
+vendor/
+.vs/
+*.user
+*.conf
+*.conf.dpapi
+*.pfx
+*.log
+!tests/fixtures/*.conf.example

@@ -1,0 +1,83 @@
+using System.Net;
+using System.Text.RegularExpressions;
+
+namespace RedRoute.Core;
+
+public sealed record ParsedProfile(Dictionary<string, string> Interface, Dictionary<string, string> Peer)
+{
+    public bool IsAmnezia => Interface.Keys.Any(k => ConfParser.AwgFields.Contains(k));
+    public string[] Addresses => Interface["Address"].Split(',').Select(s => Domains.NormalizeCidr(s)).ToArray();
+    public (string Host, int Port) Endpoint
+    {
+        get
+        {
+            var uri = new Uri("udp://" + Peer["Endpoint"]);
+            return (uri.Host.Trim('[', ']'), uri.Port);
+        }
+    }
+}
+public static partial class ConfParser
+{
+    public static readonly HashSet<string> AwgFields = new(StringComparer.OrdinalIgnoreCase)
+    { "Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4", "I1", "I2", "I3", "I4", "I5", "HeaderProtectionKey", "ContentPaddingAddition", "RekeyAfterTime", "RekeyTimeout", "RejectAfterTime", "KeepaliveTimeout", "MaxHandshakeAttempts", "RandomTrailers", "DisableCookies" };
+    public static ParsedProfile Parse(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text) || text.Length > 65536 || text.Contains('\0')) throw new FormatException("Пустой или слишком большой .conf.");
+        var iface = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var peer = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, string>? current = null;
+        var seenInterface = false; var seenPeer = false;
+        foreach (var raw in text.Split('\n'))
+        {
+            var line = raw.Trim().TrimStart('\uFEFF');
+            if (line.Length == 0 || line[0] is '#' or ';') continue;
+            if (line.StartsWith('['))
+            {
+                if (line.Equals("[Interface]", StringComparison.OrdinalIgnoreCase) && !seenInterface) { seenInterface = true; current = iface; }
+                else if (line.Equals("[Peer]", StringComparison.OrdinalIgnoreCase) && !seenPeer) { seenPeer = true; current = peer; }
+                else throw new FormatException("Поддерживается один раздел Interface и один Peer в каждом файле.");
+                continue;
+            }
+            var equal = line.IndexOf('=');
+            if (current == null || equal < 1) throw new FormatException("Некорректная строка .conf.");
+            var key = line[..equal].Trim(); var value = line[(equal + 1)..].Split('#')[0].Trim();
+            var allowed = current == iface
+                ? AwgFields.Contains(key) || new[] { "PrivateKey", "Address", "DNS", "MTU", "ListenPort" }.Contains(key, StringComparer.OrdinalIgnoreCase)
+                : new[] { "PublicKey", "PresharedKey", "Endpoint", "AllowedIPs", "PersistentKeepalive" }.Contains(key, StringComparer.OrdinalIgnoreCase);
+            if (!allowed) throw new FormatException($"Параметр {key} не поддерживается. Скрипты из конфигурации не выполняются.");
+            if (!current.TryAdd(key, value)) throw new FormatException($"Параметр {key} повторяется.");
+        }
+        foreach (var key in new[] { "PrivateKey", "Address" }) if (!iface.ContainsKey(key)) throw new FormatException($"В Interface отсутствует {key}.");
+        foreach (var key in new[] { "PublicKey", "Endpoint", "AllowedIPs" }) if (!peer.ContainsKey(key)) throw new FormatException($"В Peer отсутствует {key}.");
+        ValidateKey(iface["PrivateKey"]); ValidateKey(peer["PublicKey"]);
+        if (peer.TryGetValue("PresharedKey", out var psk)) ValidateKey(psk);
+        var parsed = new ParsedProfile(iface, peer);
+        _ = parsed.Addresses;
+        if (!Uri.TryCreate("udp://" + peer["Endpoint"], UriKind.Absolute, out var endpoint) || endpoint.Port is < 1 or > 65535 || endpoint.Host.Length == 0 || endpoint.AbsolutePath != "/" || endpoint.UserInfo != "" || endpoint.Query != "" || endpoint.Fragment != "")
+            throw new FormatException("Некорректный Endpoint: нужен адрес:порт.");
+        if (Uri.CheckHostName(endpoint.Host.Trim('[', ']')) == UriHostNameType.Unknown) throw new FormatException("Некорректный адрес сервера.");
+        foreach (var range in peer["AllowedIPs"].Split(',')) _ = Domains.NormalizeCidr(range);
+        foreach (var (key, value) in iface)
+        {
+            if (key.Equals("MTU", StringComparison.OrdinalIgnoreCase)) ValidateNumber(value, 1280, 9000, key);
+            else if (key.Equals("ListenPort", StringComparison.OrdinalIgnoreCase)) ValidateNumber(value, 0, 65535, key);
+            else if (new[] { "Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4" }.Contains(key, StringComparer.OrdinalIgnoreCase)) ValidateNumber(value, 0, 65535, key);
+            else if (key.Length == 2 && key[0] is 'H' or 'h' && "1234".Contains(key[1]) && !HeaderValue().IsMatch(value)) throw new FormatException("Некорректный диапазон H.");
+            else if (key.Length == 2 && key[0] is 'I' or 'i' && "12345".Contains(key[1]) && (value.Length > 4096 || value.Any(char.IsControl))) throw new FormatException("Некорректный I-параметр.");
+            else if (key.Equals("HeaderProtectionKey", StringComparison.OrdinalIgnoreCase)) ValidateKey(value);
+            else if (key is "RandomTrailers" or "DisableCookies" && !bool.TryParse(value, out _)) throw new FormatException("Некорректный логический параметр.");
+        }
+        if (peer.TryGetValue("PersistentKeepalive", out var keep)) ValidateNumber(keep, 0, 65535, "PersistentKeepalive");
+        return parsed;
+    }
+    private static void ValidateKey(string value)
+    {
+        try { if (Convert.FromBase64String(value).Length != 32) throw new FormatException(); }
+        catch (FormatException) { throw new FormatException("Ключ в .conf должен содержать 32 байта в Base64."); }
+    }
+    private static void ValidateNumber(string value, int min, int max, string key)
+    {
+        if (!int.TryParse(value, out var n) || n < min || n > max) throw new FormatException($"Некорректный {key}.");
+    }
+    [GeneratedRegex(@"^\d{1,10}(-\d{1,10})?$", RegexOptions.CultureInvariant)] private static partial Regex HeaderValue();
+}

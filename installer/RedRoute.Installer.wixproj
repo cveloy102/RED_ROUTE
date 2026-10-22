@@ -1,0 +1,6 @@
+<Project Sdk="WixToolset.Sdk/6.0.2">
+ <PropertyGroup>
+  <OutputName>RED_ROUTE-0.1.0-win-x64</OutputName><InstallerPlatform>x64</InstallerPlatform>
+  <DefineConstants>PublishDir=$(MSBuildThisFileDirectory)..\artifacts\publish;$(DefineConstants)</DefineConstants>
+ </PropertyGroup>
+</Project>

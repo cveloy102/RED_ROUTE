@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><AssemblyName>RED_ROUTE.Service</AssemblyName></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../RedRoute.Platform/RedRoute.Platform.csproj" /></ItemGroup>
+</Project>

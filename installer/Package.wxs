@@ -1,0 +1,31 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+ <Package Name="RED_ROUTE" Manufacturer="RED_ROUTE" Version="0.1.0" UpgradeCode="74D7C06B-A26A-4411-A111-92760468AA21" Scope="perMachine" Compressed="yes" Language="1049">
+  <SummaryInformation Description="RED_ROUTE — VPN-клиент для Windows 10 и 11"/>
+  <MajorUpgrade DowngradeErrorMessage="Уже установлена более новая версия RED_ROUTE." Schedule="afterInstallInitialize"/>
+  <MediaTemplate EmbedCab="yes" CompressionLevel="high"/>
+  <Icon Id="RedRouteIcon" SourceFile="..\src\RedRoute.App\Assets\RedRoute.ico"/><Property Id="ARPPRODUCTICON" Value="RedRouteIcon"/>
+  <Launch Condition="VersionNT64 AND WINDOWSBUILDNUMBER &gt;= 19045" Message="Нужна Windows 10 22H2 или Windows 11 (64-разрядная)."/>
+  <Property Id="WINDOWSBUILDNUMBER"><RegistrySearch Id="WindowsBuild" Root="HKLM" Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion" Name="CurrentBuildNumber" Type="raw" Bitness="always64"/></Property>
+  <StandardDirectory Id="ProgramFiles64Folder"><Directory Id="INSTALLFOLDER" Name="RED_ROUTE">
+   <Directory Id="SERVICEFOLDER" Name="service">
+    <Component Id="VpnService" Bitness="always64" Guid="611C723B-EC49-46C5-8E0B-5C90F0EE6F8A">
+     <File Id="ServiceExe" Source="$(var.PublishDir)\service\RED_ROUTE.Service.exe" KeyPath="yes"/>
+     <ServiceInstall Id="InstallService" Name="RED_ROUTE" DisplayName="RED_ROUTE VPN" Description="VPN, маршрутизация сайтов и резервные профили RED_ROUTE" Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem"/>
+     <ServiceControl Id="ControlService" Name="RED_ROUTE" Start="install" Stop="both" Remove="uninstall" Wait="yes"/>
+    </Component>
+   </Directory>
+   <Component Id="OwnerRegistration" Bitness="always64" Guid="A899A48F-3B6C-47D3-9C84-A809F95B6002">
+    <RegistryValue Root="HKLM" Key="SOFTWARE\RED_ROUTE" Name="OwnerSid" Type="string" Value="[UserSID]" KeyPath="yes"/>
+    <RegistryValue Root="HKLM" Key="SOFTWARE\RED_ROUTE" Name="InstallDirectory" Type="string" Value="[INSTALLFOLDER]"/>
+   </Component>
+  </Directory></StandardDirectory>
+  <StandardDirectory Id="ProgramMenuFolder"><Directory Id="MenuFolder" Name="RED_ROUTE"><Component Id="StartMenu" Guid="867B4F51-B508-42D3-9EA8-27419EC25272">
+   <Shortcut Id="LaunchShortcut" Name="RED_ROUTE" Target="[INSTALLFOLDER]RED_ROUTE.exe" WorkingDirectory="INSTALLFOLDER"/>
+   <Shortcut Id="RecoverShortcut" Name="RED_ROUTE — восстановить интернет" Target="[INSTALLFOLDER]RED_ROUTE.exe" Arguments="--recover" WorkingDirectory="INSTALLFOLDER"/>
+   <RemoveFolder Id="RemoveMenuFolder" On="uninstall"/>
+   <RegistryValue Root="HKCU" Key="SOFTWARE\RED_ROUTE" Name="StartMenu" Value="1" Type="integer" KeyPath="yes"/>
+  </Component></Directory></StandardDirectory>
+  <ComponentGroup Id="ApplicationFiles" Directory="INSTALLFOLDER"><Files Include="$(var.PublishDir)\**"><Exclude Files="$(var.PublishDir)\service\RED_ROUTE.Service.exe"/><Exclude Files="**\*.pdb"/></Files></ComponentGroup>
+  <Feature Id="MainFeature" Title="RED_ROUTE" Level="1"><ComponentGroupRef Id="ApplicationFiles"/><ComponentRef Id="VpnService"/><ComponentRef Id="OwnerRegistration"/><ComponentRef Id="StartMenu"/></Feature>
+ </Package>
+</Wix>
