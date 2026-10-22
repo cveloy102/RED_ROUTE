@@ -1,4 +1,4 @@
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
  <Package Name="RED_ROUTE" Manufacturer="RED_ROUTE" Version="$(var.ProductVersion)" UpgradeCode="74D7C06B-A26A-4411-A111-92760468AA21" Scope="perMachine" Compressed="yes" Language="1049" Codepage="1251">
   <SummaryInformation Description="RED_ROUTE — VPN-клиент для Windows 10 и 11"/>
   <MajorUpgrade DowngradeErrorMessage="Уже установлена более новая версия RED_ROUTE." Schedule="afterInstallInitialize"/>
@@ -42,7 +42,9 @@
    <Directory Id="SERVICEFOLDER" Name="service">
     <Component Id="VpnService" Bitness="always64" Guid="611C723B-EC49-46C5-8E0B-5C90F0EE6F8A">
      <File Id="ServiceExe" Source="$(var.PublishDir)\service\RED_ROUTE.Service.exe" KeyPath="yes"/>
-     <ServiceInstall Id="InstallService" Name="RED_ROUTE" DisplayName="RED_ROUTE VPN" Description="VPN, маршрутизация сайтов и резервные профили RED_ROUTE" Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem"/>
+     <ServiceInstall Id="InstallService" Name="RED_ROUTE" DisplayName="RED_ROUTE VPN" Description="VPN, маршрутизация сайтов и резервные профили RED_ROUTE" Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem">
+      <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart" ResetPeriodInDays="1" RestartServiceDelayInSeconds="5"/>
+     </ServiceInstall>
      <ServiceControl Id="ControlService" Name="RED_ROUTE" Start="install" Stop="both" Remove="uninstall" Wait="yes"/>
     </Component>
    </Directory>

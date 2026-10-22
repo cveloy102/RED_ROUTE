@@ -12,10 +12,21 @@ internal static class Recovery
 {
     public static async Task<bool> RunAsync()
     {
+        try { var saved = SecureStore.Load(); saved.Mode = RouteMode.Off; SecureStore.Save(saved); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FormatException or System.Text.Json.JsonException or System.Security.Cryptography.CryptographicException) { }
         try
         {
             var result = await PipeProtocol.CallAsync(new("recover"));
-            if (result.Success) return true;
+            if (result.Success)
+            {
+                var deadline = DateTime.UtcNow.AddSeconds(25);
+                while (DateTime.UtcNow < deadline)
+                {
+                    var state = (await PipeProtocol.CallAsync(new("status"))).Status;
+                    if (state?.Mode == RouteMode.Off && state.Phase == ConnectionPhase.Off) return true;
+                    await Task.Delay(150);
+                }
+            }
         }
         catch (Exception ex) when (ex is IOException or TimeoutException or OperationCanceledException or UnauthorizedAccessException) { }
         try

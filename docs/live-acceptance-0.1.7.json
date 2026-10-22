@@ -1,0 +1,125 @@
+{
+  "Time": "2026-10-22T19:28:55.0308663+00:00",
+  "Results": [
+    {
+      "Name": "Off: no active RED_ROUTE tunnel",
+      "Passed": true,
+      "Seconds": 1.31
+    },
+    {
+      "Name": "On: system egress equals independently authenticated VPN health-proxy egress",
+      "Passed": true,
+      "Seconds": 6.11
+    },
+    {
+      "Name": "Auto empty list: internet stays direct",
+      "Passed": true,
+      "Seconds": 9.25
+    },
+    {
+      "Name": "Auto domain: selected destination uses VPN",
+      "Passed": true,
+      "Seconds": 13.25
+    },
+    {
+      "Name": "Auto domain: unlisted destination stays direct",
+      "Passed": true,
+      "Seconds": 13.53
+    },
+    {
+      "Name": "Exactly one installed VPN core captures traffic",
+      "Passed": true,
+      "Seconds": 13.54
+    },
+    {
+      "Name": "Rename/add reserve/toggle failover: core PID unchanged",
+      "Passed": true,
+      "Seconds": 13.54
+    },
+    {
+      "Name": "Auto IP rule: selected IP uses VPN with correct TLS hostname",
+      "Passed": true,
+      "Seconds": 18.06
+    },
+    {
+      "Name": "Unavailable primary: real connection falls through to reserve",
+      "Passed": true,
+      "Seconds": 27.47
+    },
+    {
+      "Name": "Failover disabled: failed primary leaves internet direct",
+      "Passed": true,
+      "Seconds": 34.05
+    },
+    {
+      "Name": "All profiles unavailable: no tunnel and direct internet",
+      "Passed": true,
+      "Seconds": 40.28
+    },
+    {
+      "Name": "Connection recovers after replacing unavailable profile",
+      "Passed": true,
+      "Seconds": 44
+    },
+    {
+      "Name": "Selected DNS answer works before core crash",
+      "Passed": true,
+      "Seconds": 44.5
+    },
+    {
+      "Name": "Core crash test targets only installed RED_ROUTE core",
+      "Passed": true,
+      "Seconds": 44.51
+    },
+    {
+      "Name": "Core crash: monitor reconnects without three failed cycles",
+      "Passed": true,
+      "Seconds": 50.66
+    },
+    {
+      "Name": "New DNS allocation after crash cannot reuse previously delivered address",
+      "Passed": true,
+      "Seconds": 50.69
+    },
+    {
+      "Name": "Previously cached DNS answer remains usable after core crash",
+      "Passed": true,
+      "Seconds": 51.57
+    },
+    {
+      "Name": "Rapid On/Off: final Off cancels candidate and releases capture",
+      "Passed": true,
+      "Seconds": 51.79
+    },
+    {
+      "Name": "Recovery command: routes released and direct internet restored",
+      "Passed": true,
+      "Seconds": 63.01
+    },
+    {
+      "Name": "Stale background update after recovery cannot enable VPN or replace profiles",
+      "Passed": true,
+      "Seconds": 63.02
+    },
+    {
+      "Name": "Service crash test targets only installed RED_ROUTE service",
+      "Passed": true,
+      "Seconds": 68.16
+    },
+    {
+      "Name": "Service crash: child job releases tunnel and internet remains direct",
+      "Passed": true,
+      "Seconds": 69.72
+    },
+    {
+      "Name": "Automatic service restart: saved mode reconnects and previous event history survives",
+      "Passed": true,
+      "Seconds": 77.64
+    },
+    {
+      "Name": "User profiles/rules/settings were never modified by tests",
+      "Passed": true,
+      "Seconds": 77.64
+    }
+  ]
+}

@@ -6,7 +6,8 @@ three consecutive failures, all-unavailable direct fallback, recovery, mode defa
 bounded IPC, and engine schema validation for AWG Auto/On/probe and WireGuard.
 WPF smoke test exercises domain entry/validation and renders all three pages.
 
-Not yet executed on a real VPN/Windows installation:
+Coverage checklist. Versioned acceptance notes below record which scenarios have
+been executed; passing one scenario does not establish all variants in its item:
 
 1. Clean MSI install on Windows 10 22H2 and Windows 11 x64; standard-user app launch
    with administrative credentials supplied only to installer. Verify pipe OwnerSid.
@@ -41,8 +42,8 @@ the temporary rule without saving it to user settings. No IP or keys are recorde
 
 WPF smoke validation checks that the expanded settings panel is fully visible
 after opening; installer welcome/progress/completion are rendered separately.
-Windows 10, network-disruption/failover live tests and forced-process crash recovery
-remain unverified; the earlier checklist still applies to those scenarios.
+At 0.1.3, Windows 10, network-disruption/failover live tests and forced-process crash
+recovery remained unverified; see later release acceptance below.
 
 ## Local acceptance for 0.1.4
 
@@ -63,3 +64,9 @@ remain unverified; the earlier checklist still applies to those scenarios.
 - The reported 2ip.ru routing symptom was traced by the user to router configuration.
   This site's automated HTTP request was rejected, so no successful 2ip.ru page
   acceptance is claimed.
+
+## Reliability acceptance for 0.1.8
+
+See [TEST-REPORT-0.1.8.md](TEST-REPORT-0.1.8.md) for reproduced defects, the automated
+and live fault matrix, and explicitly unverified environments. The earlier release
+notes are historical, rather than the current coverage limit.

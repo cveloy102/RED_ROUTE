@@ -2,6 +2,7 @@ namespace RedRoute.Core;
 
 public interface ITunnelEngine : IAsyncDisposable
 {
+    bool IsRunning { get; }
     IReadOnlyList<ProbeResult> LastChecks { get; }
     Task StartAsync(VpnProfile profile, ClientSettings settings, bool captureTraffic, CancellationToken token);
     Task StopAsync(CancellationToken token);
@@ -9,8 +10,10 @@ public interface ITunnelEngine : IAsyncDisposable
 }
 
 /// <summary>All methods are serialized by the service. A candidate is tested without installing routes.</summary>
-public sealed class FailoverController(ITunnelEngine engine)
+public sealed class FailoverController
 {
+    private readonly ITunnelEngine engine;
+    private readonly Action<IReadOnlyList<EventEntry>>? saveHistory;
     private ClientSettings settings = new();
     private readonly Queue<EventEntry> history = new();
     private int current = -1, failures;
@@ -18,12 +21,27 @@ public sealed class FailoverController(ITunnelEngine engine)
     private string message = "VPN выключен. Интернет работает напрямую.";
     private DateTimeOffset? lastSuccess;
     private EngineStatus snapshot = new(RouteMode.Off, ConnectionPhase.Off, null, "VPN выключен. Интернет работает напрямую.", null, 0, []);
+    public FailoverController(ITunnelEngine engine, IEnumerable<EventEntry>? previousEvents = null, Action<IReadOnlyList<EventEntry>>? saveHistory = null)
+    {
+        this.engine = engine; this.saveHistory = saveHistory;
+        foreach (var entry in (previousEvents ?? []).TakeLast(150)) history.Enqueue(entry);
+    }
     public EngineStatus Status => Volatile.Read(ref snapshot);
     public async Task ConfigureAsync(ClientSettings value, CancellationToken token)
     {
         value.Validate();
-        await engine.StopAsync(token);
+        var active = current >= 0 && current < settings.Profiles.Count ? settings.Profiles[current] : null;
+        var nextIndex = active == null ? -1 : value.Profiles.FindIndex(p => p.Id == active.Id && p.Config == active.Config);
+        var keepTunnel = phase == ConnectionPhase.Connected && engine.IsRunning && value.Mode == settings.Mode && nextIndex >= 0
+            && (value.Mode != RouteMode.Auto || EffectiveSites(value).SequenceEqual(EffectiveSites(settings)));
         settings = new ClientSettings { Mode = value.Mode, Profiles = [.. value.Profiles], Sites = [.. value.Sites], AutoFailover = value.AutoFailover, DatabaseUpdated = value.DatabaseUpdated, StartWithWindows = value.StartWithWindows };
+        if (keepTunnel)
+        {
+            current = nextIndex;
+            if (failures == 0) message = $"VPN работает · {settings.Profiles[current].Name}";
+            Set("settings_updated", "Настройки обновлены без перезапуска VPN.", false); return;
+        }
+        await engine.StopAsync(token);
         current = -1; failures = 0;
         if (settings.Mode == RouteMode.Off) { phase = ConnectionPhase.Off; Set("off", "VPN выключен. Интернет работает напрямую."); return; }
         await ConnectAsync(0, token);
@@ -32,15 +50,30 @@ public sealed class FailoverController(ITunnelEngine engine)
     {
         if (settings.Mode == RouteMode.Off) return;
         if (phase != ConnectionPhase.Connected) { await ConnectAsync(0, token); return; }
-        if (await engine.CheckAsync(token)) { failures = 0; lastSuccess = DateTimeOffset.UtcNow; Publish(); return; }
+        if (await engine.CheckAsync(token))
+        {
+            var hadFailure = failures > 0; failures = 0; lastSuccess = DateTimeOffset.UtcNow;
+            message = $"VPN работает · {settings.Profiles[current].Name}";
+            if (hadFailure) Set("probe_recovered", "Проверка VPN снова проходит. Соединение работает.", false); else Publish();
+            return;
+        }
         failures++;
-        Set("probe_failed", $"Проверка VPN не прошла ({failures}/3).");
-        if (failures < 3) return;
+        Set("probe_failed", $"Проверка VPN не прошла ({failures}/3). " + string.Join("; ", engine.LastChecks.Select(c => $"{c.Target}: {c.Result}, {c.Milliseconds} мс")));
+        if (engine.IsRunning && failures < 3) return;
         var next = settings.AutoFailover ? (current + 1) % Math.Max(settings.Profiles.Count, 1) : current;
         await engine.StopAsync(token);
         phase = ConnectionPhase.Direct;
         Set("fail_open", "Связь с VPN потеряна. Интернет работает напрямую.");
         await ConnectAsync(Math.Max(next, 0), token);
+    }
+    public async Task InterruptedAsync(string code)
+    {
+        try { await engine.StopAsync(CancellationToken.None); }
+        finally
+        {
+            current = -1; failures = 0; phase = settings.Mode == RouteMode.Off ? ConnectionPhase.Off : ConnectionPhase.Direct;
+            Set(code, settings.Mode == RouteMode.Off ? "VPN выключен. Интернет работает напрямую." : "Подключение прервано. Интернет работает напрямую. Повторим подключение.");
+        }
     }
     public async Task RecoverAsync(CancellationToken token)
     {
@@ -83,11 +116,16 @@ public sealed class FailoverController(ITunnelEngine engine)
         current = -1; phase = ConnectionPhase.Direct;
         Set("all_unavailable", "VPN недоступен. Интернет работает напрямую. Повторим подключение.");
     }
-    private void Set(string code, string text)
+    private static IEnumerable<string> EffectiveSites(ClientSettings value) => value.Sites.SelectMany(s => s.Domains.Select(d => "d:" + Domains.Normalize(d))
+        .Concat(s.IpRanges.Select(ip => "i:" + Domains.NormalizeCidr(ip)))).Distinct().Order(StringComparer.Ordinal);
+    private void Set(string code, string text, bool replaceMessage = true)
     {
-        message = text; history.Enqueue(new(DateTimeOffset.UtcNow, code, text));
+        if (replaceMessage) message = text;
+        history.Enqueue(new(DateTimeOffset.UtcNow, code, text));
         while (history.Count > 150) history.Dequeue();
         Publish();
+        try { saveHistory?.Invoke(history.ToArray()); }
+        catch (Exception ex) when (ex is not OutOfMemoryException) { /* Diagnostic storage cannot interrupt routing. */ }
     }
     private void Publish() => Volatile.Write(ref snapshot, new(settings.Mode, phase,
         current >= 0 && current < settings.Profiles.Count ? settings.Profiles[current].Name : null,

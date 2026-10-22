@@ -61,11 +61,12 @@ Assert((await PipeProtocol.ReadAsync<ServiceRequest>(framed, default)).Command =
 using var oversized = new MemoryStream(BitConverter.GetBytes(int.MaxValue));
 try { await PipeProtocol.ReadAsync<ServiceRequest>(oversized, default); throw new Exception("Oversize accepted"); } catch (IOException) { passed++; Console.WriteLine("PASS: Reject oversized IPC before allocation"); }
 var destination = Path.Combine(Environment.CurrentDirectory, "artifacts", "checks"); Directory.CreateDirectory(destination);
+await ReliabilityChecks.RunAsync(config, Assert);
 foreach (var (name, awg, mode, capture) in new[] { ("awg-auto", true, RouteMode.Auto, true), ("awg-probe", true, RouteMode.Auto, false), ("awg-on", true, RouteMode.On, true), ("wg-auto", false, RouteMode.Auto, true) })
 {
     settings.Mode = mode;
     var profile = awg ? parsed : ConfParser.Parse(config.Split('\n').Where(l => !ConfParser.AwgFields.Any(k => l.StartsWith(k + " ="))).Aggregate("", (a, b) => a + b + "\n"));
-    var path = Path.Combine(destination, name + ".json"); await File.WriteAllTextAsync(path, CoreConfiguration.Build(profile, settings, capture, 12345, "synthetic-test-only", "192.0.2.53", "Ethernet").ToJsonString());
+    var path = Path.Combine(destination, name + ".json"); await File.WriteAllTextAsync(path, CoreConfiguration.Build(profile, settings, capture, 12345, "synthetic-test-only", "192.0.2.53", "Ethernet", Path.Combine(destination, "synthetic-cache.db")).ToJsonString());
     var executable = Path.Combine(Environment.CurrentDirectory, "artifacts", "engine", "amnezia-box.exe");
     if (File.Exists(executable))
     {
@@ -79,6 +80,7 @@ Console.WriteLine($"{passed} checks passed.");
 
 sealed class FakeEngine : ITunnelEngine
 {
+    public bool IsRunning => Running;
     public IReadOnlyList<ProbeResult> LastChecks => [];
     public Queue<bool> Checks { get; } = new(); public List<string> Starts { get; } = []; public bool Running { get; private set; } public bool DefaultCheck { get; init; } = true;
     public Task StartAsync(VpnProfile p, ClientSettings s, bool capture, CancellationToken t) { Starts.Add(p.Name + (capture ? ":capture" : ":probe")); Running = true; return Task.CompletedTask; }

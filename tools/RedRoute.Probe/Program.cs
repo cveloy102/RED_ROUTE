@@ -6,6 +6,16 @@ using System.Text;
 using RedRoute.Core;
 using RedRoute.Platform;
 
+if (args.Contains("--live-acceptance")) { await LiveAcceptance.RunAsync(); return; }
+if (args.Contains("--cached-dns-regression")) { await LiveAcceptance.RunAsync(dnsOnly: true); return; }
+if (args.Contains("--history"))
+{
+    var s = (await PipeProtocol.CallAsync(new("status"))).Status;
+    Console.WriteLine($"Mode={s?.Mode}; Phase={s?.Phase}; failures={s?.ConsecutiveFailures}; last successful check={s?.LastSuccess:O}");
+    foreach (var e in s?.Events ?? []) Console.WriteLine($"{e.Time:O} [{e.Code}] {e.Message}");
+    foreach (var c in s?.Checks ?? []) Console.WriteLine($"Probe {c.Target}: success={c.Success}; {c.Milliseconds} ms; {c.Result}");
+    return;
+}
 if (args.Contains("--routing-lab")) { await RoutingLab.RunAsync(); return; }
 if (args.Contains("--routing-audit"))
 {

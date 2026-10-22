@@ -40,7 +40,8 @@ static class ServiceHost
         var owner = Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\RED_ROUTE", "OwnerSid", null) as string;
         if (string.IsNullOrWhiteSpace(owner)) throw new IOException("Установщик не зарегистрировал владельца RED_ROUTE.");
         await using var engine = new TunnelEngine();
-        var controller = new FailoverController(engine);
+        var journal = new ServiceEventJournal();
+        var controller = new FailoverController(engine, journal.Load(), journal.Save);
         ClientSettings settings;
         try { settings = SecureStore.Load(true); } catch { settings = new(); }
         using var stateLock = new SemaphoreSlim(1, 1);
@@ -66,7 +67,12 @@ static class ServiceHost
                     }
                     catch (OperationCanceledException) when (actionSource.IsCancellationRequested)
                     {
-                        if (held) await engine.StopAsync(CancellationToken.None);
+                        if (held) try { await controller.InterruptedAsync("operation_cancelled"); } catch (Exception ex) when (ex is not OutOfMemoryException) { }
+                    }
+                    catch (Exception ex) when (ex is not OutOfMemoryException)
+                    {
+                        // A failed operation must release the tunnel and leave the periodic monitor alive.
+                        if (held) try { await controller.InterruptedAsync("operation_failed_" + ex.GetType().Name); } catch (Exception cleanup) when (cleanup is not OutOfMemoryException) { }
                     }
                     finally
                     {
@@ -107,9 +113,10 @@ static class ServiceHost
                     var request = await PipeProtocol.ReadAsync<ServiceRequest>(pipe, deadline.Token);
                     ServiceResponse response;
                     if (request.Command == "status") response = new(true, Status: controller.Status);
-                    else if (request.Command is "configure" or "recover")
+                    else if (request.Command is "configure" or "recover" or "update-rules")
                     {
                         var next = request.Command == "recover" ? System.Text.Json.JsonSerializer.Deserialize<ClientSettings>(System.Text.Json.JsonSerializer.Serialize(settings, Protocol.Json), Protocol.Json)! : request.Settings ?? throw new FormatException("Нет настроек.");
+                        if (request.Command == "update-rules") next = SettingsCommands.UpdateRules(settings, next);
                         if (request.Command == "recover") next.Mode = RouteMode.Off;
                         next.Validate();
                         SecureStore.Save(next, true); settings = next;

@@ -4,7 +4,7 @@ namespace RedRoute.Core;
 
 public static class CoreConfiguration
 {
-    public static JsonObject Build(ParsedProfile profile, ClientSettings settings, bool captureTraffic, int healthPort, string password, string? directDnsServer = null, string? directInterface = null)
+    public static JsonObject Build(ParsedProfile profile, ClientSettings settings, bool captureTraffic, int healthPort, string password, string? directDnsServer = null, string? directInterface = null, string? dnsCachePath = null)
     {
         var (host, port) = profile.Endpoint;
         JsonObject peer = new()
@@ -82,7 +82,7 @@ public static class CoreConfiguration
             localDns["server"] = directDnsServer;
             if (!string.IsNullOrWhiteSpace(directInterface)) localDns["bind_interface"] = directInterface;
         }
-        return new JsonObject
+        var result = new JsonObject
         {
             ["log"] = new JsonObject { ["level"] = "warn", ["timestamp"] = true },
             ["dns"] = new JsonObject
@@ -97,6 +97,9 @@ public static class CoreConfiguration
             ["outbounds"] = new JsonArray(new JsonObject { ["type"] = "direct", ["tag"] = "direct", ["domain_resolver"] = "local" }),
             ["route"] = new JsonObject { ["rules"] = rules, ["final"] = settings.Mode == RouteMode.On ? "vpn" : "direct", ["auto_detect_interface"] = true, ["default_domain_resolver"] = "local" }
         };
+        if (captureTraffic && dnsCachePath != null)
+            result["experimental"] = new JsonObject { ["cache_file"] = new JsonObject { ["enabled"] = true, ["path"] = dnsCachePath, ["cache_id"] = "redroute-dns-v1", ["store_fakeip"] = true } };
+        return result;
     }
     private static JsonArray Strings(IEnumerable<string> values) => new(values.Select(v => (JsonNode?)JsonValue.Create(v)).ToArray());
 }

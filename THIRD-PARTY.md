@@ -7,6 +7,9 @@ License: GNU General Public License v3 or later. The original notice is bundled 
 `service/engine/AMNEZIA-BOX-LICENSE.txt`. An IPv6 endpoint formatting fix
 (`net.JoinHostPort`) and a redirected-stdin graceful shutdown companion
 (`scripts/engine/redroute_control.go`) are applied reproducibly by `scripts/build-engine.ps1`.
+The FakeIP allocation path is also patched to commit its cursor and mapping before
+returning a DNS answer, so a process crash cannot lose or reassign a cached address.
+Regression tests are in `scripts/engine/fakeip_store_test.go` and run before each engine build.
 The build includes `with_gvisor,with_quic,with_wireguard,with_awg`. Dependency
 versions are recorded in the bundled `service/engine/build-info.txt` and the
 upstream `go.mod`/`go.sum` at the pinned commit. Wintun driver resources and their

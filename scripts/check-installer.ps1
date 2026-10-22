@@ -15,4 +15,5 @@ Assert-MsiRow 'SELECT `Action` FROM `InstallUISequence` WHERE `Action` = ''RedRo
 Assert-MsiRow 'SELECT `Control_` FROM `ControlEvent` WHERE `Dialog_` = ''RedRouteSuccess'' AND `Control_` = ''Finish'' AND `Event` = ''DoAction'' AND `Argument` = ''OpenRedRoute''' 'Finish offers application launch'
 Assert-MsiRow 'SELECT `Control` FROM `Control` WHERE `Dialog_` = ''RedRouteSuccess'' AND `Control` = ''Launch''' 'Launch checkbox exists'
 Assert-MsiRow 'SELECT `Name` FROM `ServiceInstall` WHERE `Name` = ''RED_ROUTE''' 'Per-machine Windows service remains in package'
+Assert-MsiRow 'SELECT `ServiceName` FROM `Wix4ServiceConfig` WHERE `ServiceName` = ''RED_ROUTE'' AND `FirstFailureActionType` = ''restart'' AND `RestartServiceDelayInSeconds` = 5' 'Unexpected service failures trigger automatic restart after five seconds'
 Assert-MsiRow 'SELECT `Property` FROM `Property` WHERE `Property` = ''ALLUSERS'' AND `Value` = ''1''' 'Installation still requires machine-wide privileges'

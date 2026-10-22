@@ -32,7 +32,10 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly CancellationTokenSource lifetime = new();
     private EngineStatus? status;
-    private bool exiting, polling, commandRunning, refreshingCatalog;
+    private bool exiting, polling, refreshingCatalog;
+    private readonly SemaphoreSlim applyGate = new(1, 1);
+    private RouteMode? requestedMode;
+    private DateTimeOffset modeRequestDeadline;
     private DateTimeOffset catalogAttempt = DateTimeOffset.MinValue;
     private sealed record SiteRow(SiteRule Rule) { public string Name => Rule.Name; public string Description => Rule.ServiceId == null ? Rule.IpRanges.Length > 0 ? "IP-адреса и подсети" : "Сайт и его поддомены" : $"Сервис · доменов: {Rule.Domains.Length}, подсетей: {Rule.IpRanges.Length}"; }
     private sealed record ProfileRow(VpnProfile Profile, int Position) { public string Title => $"{Position + 1}. {Profile.Name}"; public string Description => Position == 0 ? "Основной · подключаемся первым" : "Резерв · при недоступности предыдущего"; }
@@ -106,15 +109,16 @@ public partial class MainWindow : Window
         DatabaseText.Text = settings.DatabaseUpdated is { } date ? $"База обновлена: {date.LocalDateTime:g}" : "База сервисов ещё не загружена";
     }
     private void Notice(string text) { Feedback.Text = text; Feedback.Visibility = Visibility.Visible; }
-    private async Task ApplyAsync()
+    private async Task ApplyAsync(bool preserveMode = false)
     {
         if (smoke) { UpdateLists(); return; }
+        var held = false;
         try
         {
+            await applyGate.WaitAsync(lifetime.Token); held = true;
             SecureStore.Save(settings);
-            if (commandRunning) { Notice("Дождитесь завершения предыдущей команды."); return; }
-            commandRunning = true;
-            var response = await PipeProtocol.CallAsync(new("configure", settings), lifetime.Token);
+            if (!preserveMode) { requestedMode = settings.Mode; modeRequestDeadline = DateTimeOffset.UtcNow.AddSeconds(30); }
+            var response = await PipeProtocol.CallAsync(new(preserveMode ? "update-rules" : "configure", settings), lifetime.Token);
             if (!response.Success) { Notice(response.Error ?? "Не удалось применить настройки."); return; }
             Notice("Настройки сохранены. Состояние подключения обновится автоматически.");
         }
@@ -122,7 +126,7 @@ public partial class MainWindow : Window
         {
             Notice("Настройки сохранены локально. Служба недоступна: установите RED_ROUTE через установщик или запустите восстановление.");
         }
-        finally { commandRunning = false; UpdateLists(); UpdateModeButtons(); }
+        finally { if (held) applyGate.Release(); UpdateLists(); UpdateModeButtons(); }
     }
     private async Task PollAsync()
     {
@@ -133,6 +137,16 @@ public partial class MainWindow : Window
             if (response.Status is { } s)
             {
                 status = s;
+                if (applyGate.CurrentCount == 1 && (requestedMode == null || requestedMode == s.Mode || DateTimeOffset.UtcNow >= modeRequestDeadline))
+                {
+                    requestedMode = null;
+                    if (settings.Mode != s.Mode)
+                    {
+                        settings.Mode = s.Mode; UpdateModeButtons();
+                        try { SecureStore.Save(settings); }
+                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException) { Notice("Текущий режим работает, но не удалось сохранить его локально."); }
+                    }
+                }
                 StatusTitle.Text = s.Message;
                 StatusTitle.Foreground = Brush(s.Phase == ConnectionPhase.Connected ? "#8CDBAD" : "#E8E4D9");
                 StatusDetail.Text = s.Phase switch
@@ -273,7 +287,7 @@ public partial class MainWindow : Window
                 var old = settings.Sites[i]; if (old.ServiceId != null && old.Domains.FirstOrDefault() is { } first && catalog.Find(first) is { } updated && updated.ServiceId == old.ServiceId) settings.Sites[i] = updated;
             }
             settings.DatabaseUpdated = catalog.Updated; SecureStore.Save(settings); UpdateLists();
-            if (settings.Mode != RouteMode.Off) await ApplyAsync();
+            if (settings.Mode != RouteMode.Off) await ApplyAsync(preserveMode: true);
             if (manual) Notice("База обновлена. Собственные правила сохранены.");
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or JsonException or OperationCanceledException or FormatException)
@@ -328,7 +342,7 @@ public partial class MainWindow : Window
         {
             var report = new
             {
-                App = "RED_ROUTE", Version = "0.1.4", Time = DateTimeOffset.Now, OS = Environment.OSVersion.VersionString,
+                App = "RED_ROUTE", Version = "0.1.8", Time = DateTimeOffset.Now, OS = Environment.OSVersion.VersionString,
                 Architecture = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString(),
                 Status = status, Profiles = settings.Profiles.Select((p, i) => new { Position = i + 1, p.Name, Protocol = ConfParser.Parse(p.Config).IsAmnezia ? "AmneziaWG" : "WireGuard" }),
                 SiteRuleCount = settings.Sites.Count, DatabaseUpdated = settings.DatabaseUpdated,

@@ -18,6 +18,7 @@ public sealed class TunnelEngine : ITunnelEngine
     private readonly string runtimeFile = Path.Combine(SecureStore.ServiceDirectory, "runtime.json");
     private readonly string executable = Path.Combine(AppContext.BaseDirectory, "engine", "amnezia-box.exe");
     public IReadOnlyList<ProbeResult> LastChecks { get; private set; } = [];
+    public bool IsRunning => process != null && !process.HasExited;
     public async Task StartAsync(VpnProfile profile, ClientSettings settings, bool captureTraffic, CancellationToken token)
     {
         if (!File.Exists(executable)) throw new FileNotFoundException("Ядро VPN не установлено.");
@@ -32,7 +33,7 @@ public sealed class TunnelEngine : ITunnelEngine
         }
         parsed.Peer["Endpoint"] = endpointAddress.AddressFamily == AddressFamily.InterNetworkV6 ? $"[{endpointAddress}]:{port}" : $"{endpointAddress}:{port}";
         var directDns = DirectNetwork.Dns();
-        var json = CoreConfiguration.Build(parsed, settings, captureTraffic, healthPort, password, directDns?.Server, directDns?.Interface).ToJsonString();
+        var json = CoreConfiguration.Build(parsed, settings, captureTraffic, healthPort, password, directDns?.Server, directDns?.Interface, Path.Combine(SecureStore.ServiceDirectory, "dns-cache.db")).ToJsonString();
         await File.WriteAllTextAsync(runtimeFile, json, token);
         var info = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(executable)!, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true };
         info.ArgumentList.Add("run"); info.ArgumentList.Add("-c"); info.ArgumentList.Add(runtimeFile);
@@ -72,33 +73,32 @@ public sealed class TunnelEngine : ITunnelEngine
     }
     public async Task StopAsync(CancellationToken token)
     {
-        // Closing a kill-on-close job also handles a crashed service: Windows releases the TUN handles.
-        if (process != null)
+        try
         {
-            try
+            if (process != null && !process.HasExited)
             {
-                if (!process.HasExited)
+                try
                 {
-                    try
-                    {
-                        await process.StandardInput.WriteLineAsync("RED_ROUTE_STOP");
-                        await process.StandardInput.FlushAsync();
-                        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3));
-                    }
-                    catch (Exception ex) when (ex is IOException or TimeoutException or InvalidOperationException) { }
-                    if (!process.HasExited) process.Kill(true);
+                    await process.StandardInput.WriteLineAsync("RED_ROUTE_STOP");
+                    await process.StandardInput.FlushAsync();
+                    await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3));
                 }
+                catch (Exception ex) when (ex is IOException or TimeoutException or InvalidOperationException) { }
+                if (!process.HasExited) process.Kill(true);
                 await process.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(8));
             }
-            catch (InvalidOperationException) { }
-            finally { process.Dispose(); process = null; }
         }
-        if (job != IntPtr.Zero) { Native.CloseHandle(job); job = IntPtr.Zero; }
-        if (File.Exists(runtimeFile)) File.Delete(runtimeFile);
-        password = "";
-        // FakeIP answers must not survive when the tunnel stops.
-        Native.DnsFlushResolverCache();
+        catch (InvalidOperationException) { }
+        finally
+        {
+            // Always release the kill-on-close job, including failed/time-limited shutdowns.
+            if (job != IntPtr.Zero) { Native.CloseHandle(job); job = IntPtr.Zero; }
+            process?.Dispose(); process = null; password = "";
+            try { if (File.Exists(runtimeFile)) File.Delete(runtimeFile); }
+            finally { Native.DnsFlushResolverCache(); }
+        }
     }
+
     public async ValueTask DisposeAsync() => await StopAsync(CancellationToken.None);
     private static class Native
     {
