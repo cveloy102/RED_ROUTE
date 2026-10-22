@@ -41,12 +41,21 @@ if args.version:
     assets = [Path(value).resolve(strict=True) for value in args.assets]
     if not assets:
         raise SystemExit('Release assets are required')
-    release = request('POST', repo + '/releases', {'tag_name': 'v' + args.version, 'target_commitish': args.commit, 'name': 'RED_ROUTE ' + args.version, 'draft': True, 'prerelease': False, 'body': 'Установщик RED_ROUTE для Windows 10/11 x64. Профили и правила сохраняются при обновлении.\n\nИзменения: обновление из приложения через GitHub Releases, каталог сервисов и доменов с поиском.'})
+    existing = request('GET', repo + '/releases')
+    release = next((item for item in existing if item['tag_name'] == 'v' + args.version and item['draft']), None)
+    if release is None:
+        release = request('POST', repo + '/releases', {'tag_name': 'v' + args.version, 'target_commitish': args.commit, 'name': 'RED_ROUTE ' + args.version, 'draft': True, 'prerelease': False, 'body': 'Установщик RED_ROUTE для Windows 10/11 x64. Профили и правила сохраняются при обновлении.\n\nИзменения: обновление из приложения через GitHub Releases, каталог сервисов и доменов с поиском.'})
     upload = release['upload_url'].split('{')[0]
     if not upload.startswith('https://uploads.github.com/repos/cveloy102/RED_ROUTE/releases/'):
         raise SystemExit('Unexpected release upload URL')
     for asset in assets:
-        result = request('POST', upload + '?name=' + urllib.parse.quote(asset.name), binary=asset.read_bytes())
-        print('Uploaded:', result['name'], result['size'])
+        if any(item['name'] == asset.name and item['state'] == 'uploaded' and item['size'] == asset.stat().st_size for item in release['assets']):
+            continue
+        config = 'header = "Authorization: Bearer ' + token + '"\n'
+        response = subprocess.run(['curl.exe', '--http1.1', '--silent', '--show-error', '--fail', '--connect-timeout', '20', '--max-time', '300', '--config', '-', '-H', 'Content-Type: application/octet-stream', '-H', 'User-Agent: RED_ROUTE-release', '--data-binary', '@' + str(asset), upload + '?name=' + urllib.parse.quote(asset.name)], input=config.encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if response.returncode:
+            raise SystemExit('Asset upload failed: ' + response.stderr.decode(errors='replace'))
+        result = json.loads(response.stdout)
+        print('Uploaded:', result['name'], result['size'], flush=True)
     published = request('PATCH', repo + '/releases/' + str(release['id']), {'draft': False, 'make_latest': 'true'})
     print('Published:', published['html_url'])
