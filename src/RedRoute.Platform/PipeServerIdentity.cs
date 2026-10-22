@@ -17,7 +17,8 @@ internal static class PipeServerIdentity
         {
             var path = new StringBuilder(32768); var length = path.Capacity;
             if (!QueryFullProcessImageName(process, 0, path, ref length)) throw new IOException("Не удалось определить путь службы.");
-            var expected = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "service", "RED_ROUTE.Service.exe"));
+            var installed = Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\RED_ROUTE", "InstallDirectory", null) as string;
+            var expected = Path.GetFullPath(Path.Combine(string.IsNullOrWhiteSpace(installed) ? AppContext.BaseDirectory : installed, "service", "RED_ROUTE.Service.exe"));
             if (!string.Equals(Path.GetFullPath(path.ToString()), expected, StringComparison.OrdinalIgnoreCase)) throw new IOException("Подключение к неподтверждённой службе отклонено.");
         }
         finally { CloseHandle(process); }

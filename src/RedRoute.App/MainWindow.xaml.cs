@@ -39,6 +39,7 @@ public partial class MainWindow : Window
     public MainWindow(ClientSettings settings, bool smoke)
     {
         InitializeComponent(); this.settings = settings; this.smoke = smoke;
+        SourceInitialized += (_, _) => WindowAppearance.Apply(this);
         tray = new Forms.NotifyIcon { Text = "RED_ROUTE · VPN выключен", Icon = TrayIcon.Create(RouteMode.Off, ConnectionPhase.Off), Visible = !smoke };
         tray.DoubleClick += (_, _) => Dispatcher.Invoke(OpenWindow);
         UpdateLists(); UpdateModeButtons(); ShowPage("home");
@@ -53,6 +54,9 @@ public partial class MainWindow : Window
         if (!smoke) timer.Start();
     }
     private void OpenWindow() { Show(); WindowState = WindowState.Normal; Activate(); }
+    private void TitleMin_Click(object sender, RoutedEventArgs e) => SystemCommands.MinimizeWindow(this);
+    private void TitleMax_Click(object sender, RoutedEventArgs e) { if (WindowState == WindowState.Maximized) SystemCommands.RestoreWindow(this); else SystemCommands.MaximizeWindow(this); }
+    private void TitleClose_Click(object sender, RoutedEventArgs e) => Close();
     private void ShowPage(string name)
     {
         HomePage.Visibility = name == "home" ? Visibility.Visible : Visibility.Collapsed;
@@ -231,7 +235,12 @@ public partial class MainWindow : Window
         settings.Profiles.Remove(row.Profile); if (settings.Profiles.Count == 0) settings.Mode = RouteMode.Off; await ApplyAsync();
     }
     private async void Failover_Click(object sender, RoutedEventArgs e) { settings.AutoFailover = FailoverCheck.IsChecked == true; await ApplyAsync(); }
-    private void Advanced_Click(object sender, RoutedEventArgs e) => AdvancedPanel.Visibility = AdvancedPanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+    private void Advanced_Click(object sender, RoutedEventArgs e)
+    {
+        AdvancedPanel.Visibility = AdvancedPanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        if (AdvancedPanel.Visibility == Visibility.Visible)
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() => { UpdateLayout(); AdvancedPanel.BringIntoView(); }));
+    }
     private async void RefreshCatalog_Click(object sender, RoutedEventArgs e) => await RefreshCatalogAsync(true);
     private async Task RefreshCatalogAsync(bool manual)
     {
@@ -300,7 +309,7 @@ public partial class MainWindow : Window
         {
             var report = new
             {
-                App = "RED_ROUTE", Version = "0.1.1", Time = DateTimeOffset.Now, OS = Environment.OSVersion.VersionString,
+                App = "RED_ROUTE", Version = "0.1.3", Time = DateTimeOffset.Now, OS = Environment.OSVersion.VersionString,
                 Architecture = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString(),
                 Status = status, Profiles = settings.Profiles.Select((p, i) => new { Position = i + 1, p.Name, Protocol = ConfParser.Parse(p.Config).IsAmnezia ? "AmneziaWG" : "WireGuard" }),
                 SiteRuleCount = settings.Sites.Count, DatabaseUpdated = settings.DatabaseUpdated,
@@ -337,6 +346,12 @@ public partial class MainWindow : Window
         // Exercise only presentation here. Never call recovery or a service command in a UI smoke test.
         DomainInput.Clear(); settings.Mode = RouteMode.Off; UpdateModeButtons(); ShowPage("home"); Feedback.Visibility = Visibility.Collapsed;
         Directory.CreateDirectory(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui"));
+        Advanced_Click(this, new RoutedEventArgs());
+        await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+        var advancedLocation = AdvancedPanel.TransformToAncestor(MainScroll).Transform(new Point(0, 0));
+        if (advancedLocation.Y < -1 || advancedLocation.Y + AdvancedPanel.ActualHeight > MainScroll.ActualHeight + 1)
+            throw new InvalidOperationException("Advanced settings must be visible after opening");
+        AdvancedPanel.Visibility = Visibility.Collapsed; MainScroll.ScrollToTop();
         UpdateLayout();
         foreach (var (name, page) in new[] { ("main", "home"), ("profiles", "profiles"), ("help", "help") })
         {

@@ -50,7 +50,9 @@ public static class CoreConfiguration
             ["address"] = Strings(new[] { "172.30.255.1/30", "fdfe:dcba:9876::1/126" }),
             ["mtu"] = 1280, ["auto_route"] = true, ["strict_route"] = false, ["stack"] = "mixed"
         });
-        JsonArray rules = [new JsonObject { ["inbound"] = Strings(["health"]), ["outbound"] = "vpn" },
+        // AWG's userspace netstack has no resolver of its own. Resolve domains in the routing core before dialing it.
+        JsonArray rules = [new JsonObject { ["inbound"] = Strings(["health"]), ["action"] = "resolve", ["server"] = "remote", ["strategy"] = profile.Addresses.Any(a => a.Contains(':')) ? "prefer_ipv4" : "ipv4_only" },
+            new JsonObject { ["inbound"] = Strings(["health"]), ["outbound"] = "vpn" },
             new JsonObject { ["action"] = "sniff" }, new JsonObject { ["protocol"] = "dns", ["action"] = "hijack-dns" }];
         // Private LAN traffic stays local, except during explicit health probes above.
         rules.Add(new JsonObject { ["ip_is_private"] = true, ["outbound"] = "direct" });
@@ -58,9 +60,14 @@ public static class CoreConfiguration
         {
             var domains = settings.Sites.SelectMany(s => s.Domains).Select(Domains.Normalize).Distinct().ToArray();
             var ips = settings.Sites.SelectMany(s => s.IpRanges).Select(Domains.NormalizeCidr).Distinct().ToArray();
-            if (domains.Length > 0) rules.Add(new JsonObject { ["domain_suffix"] = Strings(domains), ["outbound"] = "vpn" });
+            if (domains.Length > 0)
+            {
+                rules.Add(new JsonObject { ["domain_suffix"] = Strings(domains), ["action"] = "resolve", ["server"] = "remote", ["strategy"] = profile.Addresses.Any(a => a.Contains(':')) ? "prefer_ipv4" : "ipv4_only" });
+                rules.Add(new JsonObject { ["domain_suffix"] = Strings(domains), ["outbound"] = "vpn" });
+            }
             if (ips.Length > 0) rules.Add(new JsonObject { ["ip_cidr"] = Strings(ips), ["outbound"] = "vpn" });
         }
+        else if (settings.Mode == RouteMode.On) rules.Add(new JsonObject { ["action"] = "resolve", ["server"] = "remote", ["strategy"] = profile.Addresses.Any(a => a.Contains(':')) ? "prefer_ipv4" : "ipv4_only" });
         // FakeIP keeps domains distinct even when unrelated sites share a CDN IP.
         JsonArray dnsRules = [];
         if (settings.Mode == RouteMode.Auto)

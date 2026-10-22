@@ -17,11 +17,14 @@ public partial class App : Application
         {
             await Recovery.RunAsync(); Shutdown(); return;
         }
-        singleton = new Mutex(true, "Local\\RED_ROUTE.App", out var created);
-        if (!created) { MessageBox.Show("RED_ROUTE уже работает. Откройте его через значок в трее.", "RED_ROUTE"); Shutdown(); return; }
+        var smoke = e.Args.Contains("--smoke-test");
+        if (!smoke)
+        {
+            singleton = new Mutex(true, "Local\\RED_ROUTE.App", out var created);
+            if (!created) { MessageBox.Show("RED_ROUTE уже работает. Откройте его через значок в трее.", "RED_ROUTE"); Shutdown(); return; }
+        }
         try
         {
-            var smoke = e.Args.Contains("--smoke-test");
             var settings = smoke ? new ClientSettings() : SecureStore.Load();
             var window = new MainWindow(settings, smoke); MainWindow = window;
             if (!e.Args.Contains("--tray") || smoke) window.Show();

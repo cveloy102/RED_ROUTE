@@ -24,5 +24,8 @@ try {
         & "$PSScriptRoot/check-installer.ps1" -Path $package.FullName
         Copy-Item -LiteralPath $package.FullName -Destination "$root/artifacts/$($package.Name)" -Force
         Get-FileHash "$root/artifacts/$($package.Name)" -Algorithm SHA256 | Format-List
+        dotnet publish src/RedRoute.Setup -c Release -r win-x64 --self-contained true -o "$root/artifacts/setup" -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true --nologo
+        if ($LASTEXITCODE -ne 0) { throw 'Setup launcher build failed' }
+        Copy-Item -LiteralPath "$root/artifacts/setup/RED_ROUTE-Setup.exe" -Destination "$root/artifacts/RED_ROUTE-$version-Setup.exe" -Force
     }
 } finally { Pop-Location }

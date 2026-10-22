@@ -35,4 +35,5 @@ jobs:
           name: RED_ROUTE-windows-x64
           path: |
             artifacts/*.msi
+            artifacts/*-Setup.exe
             artifacts/ui/

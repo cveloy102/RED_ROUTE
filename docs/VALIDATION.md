@@ -27,3 +27,19 @@ Not yet executed on a real VPN/Windows installation:
    Non-owner and remote pipe access refused; oversize/slow clients time out.
 
 Do not use the automated test result as proof of the live scenarios above.
+
+## Local acceptance for the 0.1.3 changes
+
+On the current Windows 11 computer, the 0.1.2 installer was run through its real
+WPF UI: welcome, visible progress, and persistent successful completion. A real
+saved profile completed an AWG handshake and HTTPS 204 after adding explicit
+routing-core DNS resolution before AWG userspace dialing. Full On mode changed
+public egress; Auto mode changed egress for a temporary selected diagnostic
+domain while an unlisted destination retained direct egress. Both remained
+Connected during the next monitoring interval. Tests restored Off and removed
+the temporary rule without saving it to user settings. No IP or keys are recorded here.
+
+WPF smoke validation checks that the expanded settings panel is fully visible
+after opening; installer welcome/progress/completion are rendered separately.
+Windows 10, network-disruption/failover live tests and forced-process crash recovery
+remain unverified; the earlier checklist still applies to those scenarios.

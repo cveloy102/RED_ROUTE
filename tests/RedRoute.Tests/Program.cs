@@ -28,7 +28,8 @@ var settings = new ClientSettings { Mode = RouteMode.Auto, Profiles = [new(Guid.
 var generated = CoreConfiguration.Build(parsed, settings, true, 12345, "test-password");
 Assert(generated["route"]!["final"]!.GetValue<string>() == "direct", "Auto uses direct default");
 Assert(generated["endpoints"]![0]!["useIntegratedTun"]!.GetValue<bool>() == false, "AWG probe never installs a second system tunnel");
-Assert(generated["route"]!["rules"]![0]!["outbound"]!.GetValue<string>() == "vpn", "Health proxy always traverses VPN");
+Assert(generated["route"]!["rules"]![1]!["outbound"]!.GetValue<string>() == "vpn", "Health proxy always traverses VPN");
+Assert(generated["route"]!["rules"]![0]!["action"]!.GetValue<string>() == "resolve", "AWG health resolves DNS before userspace dialing");
 Assert(generated["inbounds"]![1]!["strict_route"]!.GetValue<bool>() == false, "No kill switch");
 Assert(CoreConfiguration.Build(parsed, settings, false, 12345, "secret")["inbounds"]!.AsArray().Count == 1, "Candidate check installs no capture routes");
 settings.Mode = RouteMode.On;
