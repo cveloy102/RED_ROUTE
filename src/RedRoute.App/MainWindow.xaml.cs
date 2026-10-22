@@ -39,22 +39,46 @@ public partial class MainWindow : Window
     private DateTimeOffset catalogAttempt = DateTimeOffset.MinValue;
     private sealed record SiteRow(SiteRule Rule) { public string Name => Rule.Name; public string Description => Rule.ServiceId == null ? Rule.IpRanges.Length > 0 ? "IP-адреса и подсети" : "Сайт и его поддомены" : $"Сервис · доменов: {Rule.Domains.Length}, подсетей: {Rule.IpRanges.Length}"; }
     private sealed record ProfileRow(VpnProfile Profile, int Position) { public string Title => $"{Position + 1}. {Profile.Name}"; public string Description => Position == 0 ? "Основной · подключаемся первым" : "Резерв · при недоступности предыдущего"; }
+    private sealed record SuggestionRow(CatalogChoice Choice, bool Added) { public bool CanAdd => !Added; public string ActionText => Added ? "✓ Добавлено" : "+ Добавить"; }
+    private bool choosingSuggestion;
+    private void ShowSuggestions()
+    {
+        if (Suggestions == null || choosingSuggestion) return;
+        var addedDomains = settings.Sites.SelectMany(s => s.Domains).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var addedServices = settings.Sites.Where(s => s.ServiceId != null).Select(s => s.ServiceId!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var matches = catalog.Search(DomainInput.Text).Select(choice => new SuggestionRow(choice,
+            choice.IsService ? addedServices.Contains(choice.Rule.ServiceId!) : addedDomains.Contains(choice.Title))).ToArray();
+        Suggestions.ItemsSource = matches; SearchEmpty.Visibility = matches.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        SearchPopup.IsOpen = true;
+    }
+    private void Domain_GotFocus(object sender, KeyboardFocusChangedEventArgs e) => ShowSuggestions();
+    private void Domain_MouseDown(object sender, MouseButtonEventArgs e) => ShowSuggestions();
     private void Domain_TextChanged(object sender, TextChangedEventArgs e)
     {
-        if (Suggestions == null) return;
-        var matches = catalog.Suggest(DomainInput.Text).Where(s => !settings.Sites.Any(old => old.ServiceId == s.ServiceId)).ToArray();
-        Suggestions.ItemsSource = matches;
-        Suggestions.Visibility = matches.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (IsLoaded && (DomainInput.IsKeyboardFocusWithin || smoke)) ShowSuggestions();
     }
     private async void Suggestion_Click(object sender, RoutedEventArgs e)
     {
-        if ((sender as FrameworkElement)?.DataContext is not SiteRule rule) return;
-        if (settings.Sites.Any(s => s.ServiceId == rule.ServiceId)) { Notice("Этот сервис уже есть в списке."); return; }
-        settings.Sites.Add(rule); DomainInput.Clear(); await ApplyAsync(); Notice($"Добавлен сервис «{rule.Name}» со связанными доменами.");
+        if ((sender as FrameworkElement)?.DataContext is not SuggestionRow row || row.Added) return;
+        if (!TryAddRule(row.Choice.Rule)) return;
+        choosingSuggestion = true;
+        try { DomainInput.Clear(); SearchPopup.IsOpen = false; await ApplyAsync(); Notice($"Добавлен{(row.Choice.IsService ? " сервис" : " домен")} «{row.Choice.Title}»."); }
+        finally { choosingSuggestion = false; }
     }
-    public MainWindow(ClientSettings settings, bool smoke)
+    private bool TryAddRule(SiteRule rule)
+    {
+        try { new ClientSettings { Sites = [.. settings.Sites, rule] }.Validate(); settings.Sites.Add(rule); return true; }
+        catch (FormatException ex) { Notice(ex.Message); return false; }
+    }
+    private void Suggestions_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape) { SearchPopup.IsOpen = false; DomainInput.Focus(); e.Handled = true; }
+        else if (e.Key == Key.Enter && Suggestions.SelectedItem is SuggestionRow row) { e.Handled = true; Suggestion_Click(new Button { DataContext = row }, new RoutedEventArgs()); }
+    }
+    public MainWindow(ClientSettings settings, bool smoke, bool preview = false)
     {
         InitializeComponent(); this.settings = settings; this.smoke = smoke;
+        VersionText.Text = InstalledVersion.ToString(3);
         SourceInitialized += (_, _) => WindowAppearance.Apply(this);
         tray = new Forms.NotifyIcon { Text = "RED_ROUTE · VPN выключен", Icon = TrayIcon.Create(RouteMode.Off, ConnectionPhase.Off), Visible = !smoke };
         tray.DoubleClick += (_, _) => Dispatcher.Invoke(OpenWindow);
@@ -64,9 +88,10 @@ public partial class MainWindow : Window
         timer.Tick += async (_, _) => await PollAsync();
         Loaded += async (_, _) =>
         {
-            if (smoke) { await SmokeTestAsync(); return; }
-            timer.Start(); await PollAsync();
+            if (smoke) { if (!preview) await SmokeTestAsync(); return; }
+            timer.Start(); await PollAsync(); _ = CheckUpdatesAsync(false); updateTimer.Start();
         };
+        updateTimer.Tick += async (_, _) => await CheckUpdatesAsync(false);
         if (!smoke) timer.Start();
     }
     private void OpenWindow() { Show(); WindowState = WindowState.Normal; Activate(); }
@@ -203,8 +228,8 @@ public partial class MainWindow : Window
     private async void AddSite_Click(object sender, RoutedEventArgs e) => await AddDomainAsync();
     private async void Domain_KeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Escape) { Suggestions.Visibility = Visibility.Collapsed; e.Handled = true; }
-        else if (e.Key == Key.Down && Suggestions.Visibility == Visibility.Visible) { Suggestions.MoveFocus(new TraversalRequest(FocusNavigationDirection.First)); e.Handled = true; }
+        if (e.Key == Key.Escape) { SearchPopup.IsOpen = false; e.Handled = true; }
+        else if (e.Key == Key.Down && SearchPopup.IsOpen) { Suggestions.Focus(); if (Suggestions.Items.Count > 0) Suggestions.SelectedIndex = 0; e.Handled = true; }
         else if (e.Key == Key.Enter) { e.Handled = true; await AddDomainAsync(); }
     }
     private async Task AddDomainAsync()
@@ -220,7 +245,8 @@ public partial class MainWindow : Window
                 if (result == MessageBoxResult.Yes) rule = service;
             }
             if (settings.Sites.Any(s => (rule.ServiceId != null && s.ServiceId == rule.ServiceId) || s.Domains.Contains(domain))) { Notice("Этот сайт или сервис уже есть в списке."); return; }
-            settings.Sites.Add(rule); DomainInput.Clear(); await ApplyAsync();
+            if (!TryAddRule(rule)) return;
+            choosingSuggestion = true; DomainInput.Clear(); SearchPopup.IsOpen = false; choosingSuggestion = false; await ApplyAsync();
         }
         catch (Exception ex) when (ex is FormatException or ArgumentException) { Notice(ex.Message); }
     }
@@ -367,7 +393,7 @@ public partial class MainWindow : Window
         return AppDialog.Prompt(this, title, value);
     }
     private void Window_Closing(object? sender, CancelEventArgs e) { if (!exiting) { e.Cancel = true; Hide(); } }
-    private void Exit() { exiting = true; lifetime.Cancel(); timer.Stop(); tray.Visible = false; tray.Icon?.Dispose(); tray.Dispose(); Close(); System.Windows.Application.Current.Shutdown(); }
+    private void Exit() { exiting = true; lifetime.Cancel(); timer.Stop(); updateTimer.Stop(); SearchPopup.IsOpen = false; tray.Visible = false; tray.Icon?.Dispose(); tray.Dispose(); Close(); System.Windows.Application.Current.Shutdown(); }
     private async Task SmokeTestAsync()
     {
         DomainInput.Text = "https://example.org/path"; await AddDomainAsync();
@@ -390,13 +416,29 @@ public partial class MainWindow : Window
             var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(image));
             using var stream = File.Create(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", name + ".png")); png.Save(stream);
         }
-        DomainInput.Text = "dis"; UpdateLayout();
-        if (Suggestions.Visibility != Visibility.Visible || !Suggestions.Items.Cast<SiteRule>().Any(s => s.ServiceId == "discord")) throw new InvalidOperationException("Service suggestions failed");
-        Render(this, "suggestions");
-        var suggested = Suggestions.Items.Cast<SiteRule>().First(s => s.ServiceId == "discord");
+        DomainInput.Focus(); ShowSuggestions(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+        if (!SearchPopup.IsOpen || Suggestions.Items.Count < 20000) throw new InvalidOperationException("Empty search must show the complete catalogue");
+        void RenderPopup(string name)
+        {
+            var popup = (FrameworkElement)SearchPopup.Child; popup.UpdateLayout();
+            var image = new RenderTargetBitmap((int)popup.ActualWidth, (int)popup.ActualHeight, 96, 96, PixelFormats.Pbgra32); image.Render(popup);
+            var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(image)); using var output = File.Create(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", name + ".png")); png.Save(output);
+        }
+        RenderPopup("catalog-all");
+        DomainInput.Text = "dis"; await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+        if (!SearchPopup.IsOpen || !Suggestions.Items.Cast<SuggestionRow>().Any(s => s.Choice.IsService && s.Choice.Rule.ServiceId == "discord") || !Suggestions.Items.Cast<SuggestionRow>().Any(s => !s.Choice.IsService && s.Choice.Title == "discord.com")) throw new InvalidOperationException("Service/domain suggestions failed");
+        RenderPopup("suggestions-popup");
+        var suggested = Suggestions.Items.Cast<SuggestionRow>().First(s => s.Choice.IsService && s.Choice.Rule.ServiceId == "discord");
         Suggestion_Click(new Button { DataContext = suggested }, new RoutedEventArgs());
-        if (settings.Sites.Count != 2 || settings.Sites.Last().ServiceId != "discord" || DomainInput.Text.Length != 0 || Suggestions.Visibility != Visibility.Collapsed) throw new InvalidOperationException("Service suggestion selection failed");
-        settings.Sites.RemoveAt(1); UpdateLists(); Feedback.Visibility = Visibility.Collapsed;
+        if (settings.Sites.Count != 2 || settings.Sites.Last().ServiceId != "discord" || DomainInput.Text.Length != 0 || SearchPopup.IsOpen) throw new InvalidOperationException("Service suggestion selection failed");
+        ShowSuggestions();
+        if (!Suggestions.Items.Cast<SuggestionRow>().Any(s => s.Choice.Rule.ServiceId == "discord" && s.Added)) throw new InvalidOperationException("Already added services must remain visible");
+        SearchPopup.IsOpen = false; settings.Sites.RemoveAt(1); UpdateLists(); Feedback.Visibility = Visibility.Collapsed;
+        availableUpdate = new RedRoute.Platform.ReleaseUpdate(new Version(0, 2, 0), "Новая версия приложения. Профили и правила сохранятся.", new Uri("https://github.com/cveloy102/RED_ROUTE/releases/tag/v0.2.0"), new Uri("https://github.com/cveloy102/RED_ROUTE/releases/download/v0.2.0/RED_ROUTE-0.2.0-Setup.exe"), 150000000, new string('0', 64));
+        UpdateButton.Content = "Есть обновление 0.2.0"; UpdateButton.Visibility = Visibility.Visible; Render(this, "update-available");
+        var updatePreview = new UpdateDialog(this, availableUpdate, updater, _ => throw new InvalidOperationException("Smoke test must never run an installer"));
+        updatePreview.Preview(47); updatePreview.PreviewWindow.Show(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle); Render(updatePreview.PreviewWindow, "update-progress"); updatePreview.PreviewWindow.Close();
+        availableUpdate = null; UpdateButton.Visibility = Visibility.Collapsed;
         var sampleFolder = Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", "sample-profiles"); Directory.CreateDirectory(sampleFolder);
         File.WriteAllText(Path.Combine(sampleFolder, "Основной.conf"), "# UI preview only; not a VPN profile");
         var picker = new ProfilePicker(this, sampleFolder).PreviewWindow;
@@ -411,7 +453,7 @@ public partial class MainWindow : Window
             var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(image));
             using var stream = File.Create(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", name + ".png")); png.Save(stream);
         }
-        File.WriteAllText(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", "result.txt"), "PASS: native WPF rendering, domain normalization, invalid domain rejection, service suggestions/selection, themed import/deletion dialogs. No service, recovery, or network commands executed.");
+        File.WriteAllText(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", "result.txt"), "PASS: native WPF rendering, domain normalization, invalid domain rejection, service suggestions/selection, complete dropdown catalogue, already-added entries, themed update/import/deletion dialogs. No service, recovery, or network commands executed.");
         Exit();
     }
 }

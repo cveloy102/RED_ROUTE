@@ -14,7 +14,10 @@ Reject(() => new ClientSettings { Sites = [new("bad", null!, [])] }.Validate(), 
 Assert(new ServiceCatalog().Find("youtube.com")?.Domains.Contains("googlevideo.com") == true, "Bundled YouTube service includes playback domains");
 Assert(new ServiceCatalog().Suggest("dis").Any(s => s.ServiceId == "discord"), "Service suggestions accept a partial name");
 Assert(new ServiceCatalog().Suggest("DIS").Any(s => s.ServiceId == "discord"), "Service suggestions ignore case");
-Assert(new ServiceCatalog().Suggest("d").Count == 0 && new ServiceCatalog().Suggest("unknown-service-no-match").Count == 0, "Suggestions avoid empty and unrelated results");
+Assert(new ServiceCatalog().Suggest("d").Count > 0 && new ServiceCatalog().Suggest("unknown-service-no-match").Count == 0, "Suggestions accept one character and reject unrelated results");
+var searchCatalog = new ServiceCatalog();
+Assert(searchCatalog.Search("").Count > 20000 && searchCatalog.Suggest("").Count >= 300, "Empty search exposes the complete bundled service/domain catalogue");
+Assert(searchCatalog.Search("dis").Any(s => !s.IsService && s.Title == "discord.com") && searchCatalog.Search("dis").Any(s => s.IsService && s.Rule.ServiceId == "discord"), "Partial domain search shows both the domain and complete service");
 Assert(Domains.Normalize("пример.рф").StartsWith("xn--"), "IDN normalization");
 Reject(() => Domains.Normalize("localhost"), "Reject single-label hostname");
 Reject(() => Domains.Normalize("https://user:secret@example.org"), "Reject URL credentials");
@@ -62,6 +65,7 @@ using var oversized = new MemoryStream(BitConverter.GetBytes(int.MaxValue));
 try { await PipeProtocol.ReadAsync<ServiceRequest>(oversized, default); throw new Exception("Oversize accepted"); } catch (IOException) { passed++; Console.WriteLine("PASS: Reject oversized IPC before allocation"); }
 var destination = Path.Combine(Environment.CurrentDirectory, "artifacts", "checks"); Directory.CreateDirectory(destination);
 await ReliabilityChecks.RunAsync(config, Assert);
+await UpdateChecks.RunAsync(Assert);
 foreach (var (name, awg, mode, capture) in new[] { ("awg-auto", true, RouteMode.Auto, true), ("awg-probe", true, RouteMode.Auto, false), ("awg-on", true, RouteMode.On, true), ("wg-auto", false, RouteMode.Auto, true) })
 {
     settings.Mode = mode;

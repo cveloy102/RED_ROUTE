@@ -4,6 +4,11 @@ using RedRoute.Core;
 
 namespace RedRoute.Platform;
 
+public sealed record CatalogChoice(SiteRule Rule, bool IsService)
+{
+    public string Title => Rule.Name;
+    public string Description => IsService ? $"Весь сервис · доменов: {Rule.Domains.Length}, подсетей: {Rule.IpRanges.Length}" : "Только этот домен и его поддомены";
+}
 public sealed class ServiceCatalog
 {
     private sealed record Entry(string id, string name, string src);
@@ -13,6 +18,7 @@ public sealed class ServiceCatalog
     private sealed record Seed(SeedService[] services);
     private readonly string cachePath = Path.Combine(SecureStore.UserDirectory, "catalog.json");
     private Dictionary<string, SiteRule> services = new(StringComparer.OrdinalIgnoreCase);
+    private CatalogChoice[]? searchIndex;
     public DateTimeOffset? Updated { get; private set; }
     private static readonly Dictionary<string, string> Aliases = new(StringComparer.OrdinalIgnoreCase)
     { ["youtube.com"] = "youtube", ["youtu.be"] = "youtube", ["t.me"] = "telegram", ["telegram.org"] = "telegram", ["chatgpt.com"] = "openai", ["openai.com"] = "openai", ["discord.com"] = "discord", ["github.com"] = "github" };
@@ -23,9 +29,7 @@ public sealed class ServiceCatalog
             var seed = stream == null ? null : JsonSerializer.Deserialize<Seed>(stream);
             foreach (var entry in seed?.services ?? [])
             {
-                var ips = entry.domains.Where(d => System.Net.IPAddress.TryParse(d.Split('/')[0], out _)).Select(Domains.NormalizeCidr).ToArray();
-                var domains = entry.domains.Where(d => !System.Net.IPAddress.TryParse(d.Split('/')[0], out _)).Select(Domains.Normalize).ToArray();
-                services[entry.id] = new(entry.name, domains, ips, entry.id);
+                services[entry.id] = ParseService(entry.name, entry.id, entry.domains);
             }
         }
         try
@@ -33,10 +37,18 @@ public sealed class ServiceCatalog
             if (File.Exists(cachePath) && new FileInfo(cachePath).Length < 4_000_000)
             {
                 var cached = JsonSerializer.Deserialize<CachedCatalog>(File.ReadAllText(cachePath));
-                if (cached != null) { services = cached.Services; Updated = cached.Updated; }
+                if (cached?.Services != null)
+                {
+                    foreach (var item in cached.Services)
+                    {
+                        new ClientSettings { Sites = [item.Value] }.Validate();
+                        services[item.Key] = item.Value;
+                    }
+                    Updated = cached.Updated;
+                }
             }
         }
-        catch (Exception ex) when (ex is IOException or JsonException) { }
+        catch (Exception ex) when (ex is IOException or JsonException or FormatException or ArgumentException) { }
     }
     public SiteRule? Find(string domain)
     {
@@ -46,12 +58,23 @@ public sealed class ServiceCatalog
     public IReadOnlyList<SiteRule> Suggest(string query)
     {
         query = query.Trim();
-        if (query.Length < 2 || query.Length > 200) return [];
+        if (query.Length > 200) return [];
         return services.Values.Where(s => s.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
                 || s.ServiceId?.Contains(query, StringComparison.OrdinalIgnoreCase) == true
                 || s.Domains.Any(d => d.StartsWith(query, StringComparison.OrdinalIgnoreCase)))
             .OrderByDescending(s => s.Name.StartsWith(query, StringComparison.OrdinalIgnoreCase))
-            .ThenBy(s => s.Name, StringComparer.CurrentCultureIgnoreCase).Take(6).ToArray();
+            .ThenBy(s => s.Name, StringComparer.CurrentCultureIgnoreCase).ToArray();
+    }
+    public IReadOnlyList<CatalogChoice> Search(string query)
+    {
+        query = query.Trim();
+        if (query.Length > 200) return [];
+        searchIndex ??= services.Values.OrderBy(s => s.Name, StringComparer.CurrentCultureIgnoreCase).Select(s => new CatalogChoice(s, true))
+            .Concat(services.Values.SelectMany(s => s.Domains).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase)
+                .Select(d => new CatalogChoice(new SiteRule(d, [d], []), false))).ToArray();
+        if (query.Length == 0) return searchIndex;
+        return searchIndex.Where(s => s.Title.Contains(query, StringComparison.OrdinalIgnoreCase) || (s.IsService && s.Rule.ServiceId?.Contains(query, StringComparison.OrdinalIgnoreCase) == true))
+            .OrderByDescending(s => s.Title.StartsWith(query, StringComparison.OrdinalIgnoreCase)).ThenByDescending(s => s.IsService).ToArray();
     }
     public async Task RefreshAsync(IEnumerable<SiteRule> selected, CancellationToken token)
     {
@@ -71,24 +94,32 @@ public sealed class ServiceCatalog
             if (item == null) continue;
             if (item.src.Contains("..") || item.src.StartsWith('/') || item.src.Contains(':') || item.src.Contains('\\')) throw new IOException("Небезопасный путь базы.");
             var text = System.Text.Encoding.UTF8.GetString(await Download(client, prefix + item.src, 1000000, token));
-            List<string> domains = []; List<string> ips = [];
-            foreach (var raw in text.Split('\n'))
-            {
-                var line = raw.Split('#')[0].Trim(); if (line.Length == 0) continue;
-                if (line.StartsWith("domain:", StringComparison.Ordinal)) line = line[7..];
-                if (line.StartsWith("full:", StringComparison.Ordinal)) line = line[5..];
-                if (line.StartsWith("regexp:", StringComparison.Ordinal) || line.Contains('@')) continue;
-                if (System.Net.IPAddress.TryParse(line.Split('/')[0], out _)) ips.Add(Domains.NormalizeCidr(line));
-                else domains.Add(Domains.Normalize(line));
-            }
-            if (domains.Count + ips.Count > 15000) throw new IOException("Слишком большой список сервиса.");
-            next[id] = new(item.name, domains.Distinct().ToArray(), ips.Distinct().ToArray(), id);
+            next[id] = ParseService(item.name, id, text.Split('\n'));
         }
         var snapshot = new CachedCatalog(DateTimeOffset.UtcNow, sha, next);
         Directory.CreateDirectory(SecureStore.UserDirectory);
         var tmp = cachePath + ".tmp";
         await File.WriteAllTextAsync(tmp, JsonSerializer.Serialize(snapshot), token); File.Move(tmp, cachePath, true);
-        services = next; Updated = snapshot.Updated;
+        services = next; searchIndex = null; Updated = snapshot.Updated;
+    }
+    private static SiteRule ParseService(string name, string id, IEnumerable<string> values)
+    {
+        var domains = new HashSet<string>(StringComparer.OrdinalIgnoreCase); var ips = new HashSet<string>();
+        foreach (var raw in values)
+        {
+            var line = raw.Split('#')[0].Trim();
+            if (line.Length == 0 || line.StartsWith("regexp:", StringComparison.Ordinal) || line.Contains('@')) continue;
+            if (line.StartsWith("domain:", StringComparison.Ordinal)) line = line[7..];
+            if (line.StartsWith("full:", StringComparison.Ordinal)) line = line[5..];
+            try
+            {
+                if (System.Net.IPAddress.TryParse(line.Split('/')[0], out _)) ips.Add(Domains.NormalizeCidr(line));
+                else domains.Add(Domains.Normalize(line));
+            }
+            catch (Exception ex) when (ex is FormatException or ArgumentException) { /* Skip unsupported upstream entries, not the complete catalogue. */ }
+            if (domains.Count + ips.Count > 15000) throw new IOException("Слишком большой список сервиса.");
+        }
+        return new(name, domains.ToArray(), ips.ToArray(), id);
     }
     private static async Task<byte[]> Download(HttpClient client, string url, int limit, CancellationToken token)
     {

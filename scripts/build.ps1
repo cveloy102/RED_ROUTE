@@ -27,5 +27,10 @@ try {
         dotnet publish src/RedRoute.Setup -c Release -r win-x64 --self-contained true -o "$root/artifacts/setup" -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true --nologo
         if ($LASTEXITCODE -ne 0) { throw 'Setup launcher build failed' }
         Copy-Item -LiteralPath "$root/artifacts/setup/RED_ROUTE-Setup.exe" -Destination "$root/artifacts/RED_ROUTE-$version-Setup.exe" -Force
+        $setupHash = (Get-FileHash -LiteralPath "$root/artifacts/RED_ROUTE-$version-Setup.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+        [IO.File]::WriteAllText("$root/artifacts/RED_ROUTE-$version-Setup.exe.sha256", "$setupHash  RED_ROUTE-$version-Setup.exe`n", [Text.UTF8Encoding]::new($false))
+        $engineSource = "$root/artifacts/RED_ROUTE-$version-engine-source.zip"
+        if (Test-Path -LiteralPath $engineSource) { Remove-Item -LiteralPath $engineSource }
+        [IO.Compression.ZipFile]::CreateFromDirectory("$root/vendor/amnezia-box", $engineSource)
     }
 } finally { Pop-Location }

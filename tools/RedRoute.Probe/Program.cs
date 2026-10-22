@@ -6,6 +6,15 @@ using System.Text;
 using RedRoute.Core;
 using RedRoute.Platform;
 
+if (args.Contains("--update-download-check"))
+{
+    var updater = new GitHubUpdates();
+    var release = await updater.CheckAsync(new Version(0, 1, 8)) ?? throw new IOException("No newer verified release found");
+    Console.WriteLine("Published update: " + release.Version + "; SHA-256 supplied by GitHub");
+    var file = await updater.DownloadAsync(release, Path.Combine(Environment.CurrentDirectory, "artifacts", "update-download"), null, default);
+    Console.WriteLine("Verified installer downloaded: " + Path.GetFileName(file));
+    return;
+}
 if (args.Contains("--live-acceptance")) { await LiveAcceptance.RunAsync(); return; }
 if (args.Contains("--cached-dns-regression")) { await LiveAcceptance.RunAsync(dnsOnly: true); return; }
 if (args.Contains("--history"))

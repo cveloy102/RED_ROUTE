@@ -9,6 +9,8 @@ permissions:
   contents: read
 jobs:
   build:
+    permissions:
+      contents: write
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@v4
@@ -36,4 +38,20 @@ jobs:
           path: |
             artifacts/*.msi
             artifacts/*-Setup.exe
+            artifacts/*.sha256
+            artifacts/*-engine-source.zip
             artifacts/ui/
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $version = ([xml](Get-Content Directory.Build.props -Raw)).Project.PropertyGroup.Version
+          if ($env:RELEASE_TAG -ne "v$version") { throw 'Release tag must match the application version' }
+          gh release view $env:RELEASE_TAG *> $null
+          if ($LASTEXITCODE -eq 0) { Write-Output 'Release already exists; keeping its published assets'; exit 0 }
+          gh release create $env:RELEASE_TAG "artifacts/RED_ROUTE-$version-Setup.exe" "artifacts/RED_ROUTE-$version-Setup.exe.sha256" "artifacts/RED_ROUTE-$version-win-x64.msi" "artifacts/RED_ROUTE-$version-engine-source.zip" --verify-tag --title "RED_ROUTE $version" --generate-notes
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }

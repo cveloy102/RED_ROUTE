@@ -17,7 +17,8 @@ public partial class App : Application
         {
             await Recovery.RunAsync(); Shutdown(); return;
         }
-        var smoke = e.Args.Contains("--smoke-test");
+        var preview = e.Args.Contains("--preview");
+        var smoke = e.Args.Contains("--smoke-test") || preview;
         if (!smoke)
         {
             singleton = new Mutex(true, "Local\\RED_ROUTE.App", out var created);
@@ -26,7 +27,7 @@ public partial class App : Application
         try
         {
             var settings = smoke ? new ClientSettings() : SecureStore.Load();
-            var window = new MainWindow(settings, smoke); MainWindow = window;
+            var window = new MainWindow(settings, smoke, preview); MainWindow = window;
             if (!e.Args.Contains("--tray") || smoke) window.Show();
         }
         catch (Exception)
