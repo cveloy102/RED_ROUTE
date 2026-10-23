@@ -6,6 +6,7 @@ using System.Text;
 using RedRoute.Core;
 using RedRoute.Platform;
 
+if (args.Contains("--site-diagnostics") || args.Contains("--site-compare")) { await SiteDiagnostics.RunAsync(args.Contains("--site-compare"), args.Contains("--browser-hold"), args.Contains("--vpn-mode") ? RouteMode.On : RouteMode.Off); return; }
 if (args.Contains("--update-download-check"))
 {
     var updater = new GitHubUpdates();

@@ -79,12 +79,35 @@ if (!$fakeIpText.Contains('allocationAccess sync.Mutex')) {
     [IO.File]::WriteAllText($fakeIpFile, $fakeIpText, [Text.UTF8Encoding]::new($false))
 }
 Copy-Item -LiteralPath "$PSScriptRoot/engine/fakeip_store_test.go" -Destination "$source/dns/transport/fakeip/redroute_store_test.go" -Force
+# Loading a durable cursor must not consume it. A restart which reuses only existing
+# mappings may crash without ever allocating a new address or calling Store.Close.
+$cacheFile = Join-Path $source 'experimental/cachefile/fakeip.go'
+$cacheText = [IO.File]::ReadAllText($cacheFile).Replace("`r`n", "`n")
+if (!$cacheText.Contains('// RED_ROUTE: metadata reads are non-destructive.')) {
+    $old = @'
+		err := bucket.Delete(keyMetadata)
+		if err != nil {
+			return err
+		}
+		return metadata.UnmarshalBinary(metadataBinary)
+'@
+    $replacement = @'
+		// RED_ROUTE: metadata reads are non-destructive.
+		return metadata.UnmarshalBinary(metadataBinary)
+'@
+    $old = $old.Replace("`r`n", "`n"); $replacement = $replacement.Replace("`r`n", "`n")
+    if (!$cacheText.Contains($old)) { throw 'Pinned engine DNS metadata read patch no longer matches source' }
+    $cacheText = $cacheText.Replace($old, $replacement)
+    $cacheText = $cacheText.Replace("var metadata adapter.FakeIPMetadata`n`terr := c.DB.Batch", "var metadata adapter.FakeIPMetadata`n`terr := c.DB.View")
+    [IO.File]::WriteAllText($cacheFile, $cacheText, [Text.UTF8Encoding]::new($false))
+}
+Copy-Item -LiteralPath "$PSScriptRoot/engine/fakeip_cache_test.go" -Destination "$source/experimental/cachefile/redroute_fakeip_test.go" -Force
 & "$PSScriptRoot/engine/patch-awg.ps1" -Go $Go -Source $source
-& $Go test -C $source ./dns/transport/fakeip ./protocol/awg -count=1 -timeout=90s
+& $Go test -C $source ./dns/transport/fakeip ./experimental/cachefile ./protocol/awg -count=1 -timeout=90s
 if ($LASTEXITCODE -ne 0) { throw 'DNS crash durability checks failed' }
 & $Go test -C $source github.com/amnezia-vpn/amneziawg-go/v3/device -run '^(TestTwoDevicePing|TestAWGDevicePing|TestNoiseHandshake|TestConcurrencySafety|TestUpDown)$' -count=1 -timeout=90s
 if ($LASTEXITCODE -ne 0) { throw 'AWG packet and concurrency checks failed' }
-& $Go build -C $source -tags 'with_gvisor,with_quic,with_wireguard,with_awg' -trimpath -ldflags '-s -w -X github.com/sagernet/sing-box/constant.Version=1.260910.0-redroute4' -o "$destination/amnezia-box.exe" ./cmd/sing-box
+& $Go build -C $source -tags 'with_gvisor,with_quic,with_wireguard,with_awg' -trimpath -ldflags '-s -w -X github.com/sagernet/sing-box/constant.Version=1.260910.0-redroute5' -o "$destination/amnezia-box.exe" ./cmd/sing-box
 if ($LASTEXITCODE -ne 0) { throw 'VPN core build failed' }
 New-Item -ItemType Directory -Force "$root/artifacts/checks" | Out-Null
 & $Go build -C $source -trimpath -o "$root/artifacts/checks/redroute-lab-server.exe" "$root/tools/native-lab-server/main.go"

@@ -17,6 +17,7 @@ Assert-MsiRow 'SELECT `Control` FROM `Control` WHERE `Dialog_` = ''RedRouteSucce
 Assert-MsiRow 'SELECT `Name` FROM `ServiceInstall` WHERE `Name` = ''RED_ROUTE''' 'Per-machine Windows service remains in package'
 Assert-MsiRow 'SELECT `ServiceName` FROM `Wix4ServiceConfig` WHERE `ServiceName` = ''RED_ROUTE'' AND `FirstFailureActionType` = ''restart'' AND `RestartServiceDelayInSeconds` = 5' 'Unexpected service failures trigger automatic restart after five seconds'
 Assert-MsiRow 'SELECT `Property` FROM `Property` WHERE `Property` = ''ALLUSERS'' AND `Value` = ''1''' 'Installation still requires machine-wide privileges'
+Assert-MsiRow 'SELECT `Action` FROM `CustomAction` WHERE `Source` = ''REINSTALLMODE'' AND `Target` = ''amus'' AND `Type` = 51' 'Major upgrade installs a complete matching private runtime regardless of existing file versions'
 Assert-MsiRow 'SELECT `Name` FROM `Registry` WHERE `Name` = ''OwnerSid'' AND `Value` = ''[REDROUTEOWNER]''' 'Service ownership uses the interactive user rather than elevated installer credentials'
 Assert-MsiRow 'SELECT `Name` FROM `RegLocator` WHERE `Name` = ''OwnerSid''' 'Upgrade locates and preserves the existing owner'
 Assert-MsiRow 'SELECT `Name` FROM `ServiceControl` WHERE `Name` = ''RED_ROUTE'' AND `Event` = 163 AND `Wait` = 1' 'Install, upgrade and uninstall wait for orderly service shutdown'
@@ -30,3 +31,11 @@ while ($null -ne ($file = $files.Fetch())) {
     if ($name -match '(?i)(lab-server|synthetic|\.conf$|settings\.dpapi$|\.pdb$)') { throw "Unexpected test or private file in installer: $name" }
 }
 $files.Close(); Write-Output 'PASS: No lab executables, profiles, private settings or debug symbols are shipped'
+foreach ($required in @('hostpolicy.dll', 'hostfxr.dll', 'coreclr.dll', 'System.Private.CoreLib.dll')) {
+    $runtimeFiles = $database.OpenView('SELECT `FileName` FROM `File`'); $runtimeFiles.Execute()
+    $count = 0
+    while ($null -ne ($file = $runtimeFiles.Fetch())) { if ($file.StringData(1).Split('|')[-1] -eq $required) { $count++ } }
+    $runtimeFiles.Close()
+    if ($count -ne 2) { throw "Private runtime must contain $required for both UI and service, found $count" }
+    Write-Output "PASS: Both application and service contain $required"
+}

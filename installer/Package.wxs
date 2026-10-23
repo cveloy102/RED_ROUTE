@@ -5,6 +5,9 @@
   <MediaTemplate EmbedCab="yes" CompressionLevel="high"/>
   <Icon Id="RedRouteIcon" SourceFile="..\src\RedRoute.App\Assets\RedRoute.ico"/><Property Id="ARPPRODUCTICON" Value="RedRouteIcon"/>
   <Property Id="LAUNCHREDROUTE" Value="1"/>
+  <!-- This private self-contained runtime must be installed as one matching set.
+       Early major-upgrade removal can otherwise delete files skipped during costing. -->
+  <SetProperty Id="REINSTALLMODE" Value="amus" Before="CostInitialize" Sequence="both"/>
   <Property Id="REDROUTEOWNER" Secure="yes"><RegistrySearch Id="ExistingOwner" Root="HKLM" Key="SOFTWARE\RED_ROUTE" Name="OwnerSid" Type="raw" Bitness="always64"/></Property>
   <SetProperty Id="REDROUTEOWNER" Value="[UserSID]" After="AppSearch" Sequence="both" Condition="NOT REDROUTEOWNER"/>
   <EnsureTable Id="ControlCondition"/>
