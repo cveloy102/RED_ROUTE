@@ -479,8 +479,17 @@ public partial class MainWindow : Window
         DomainInput.Text = "dis"; await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
         if (!SearchPopup.IsOpen || !Suggestions.Items.Cast<SuggestionRow>().Any(s => s.Choice.IsService && s.Choice.Rule.ServiceId == "discord") || !Suggestions.Items.Cast<SuggestionRow>().Any(s => !s.Choice.IsService && s.Choice.Title == "discord.com")) throw new InvalidOperationException("Service/domain suggestions failed");
         RenderPopup("suggestions-popup");
-        var suggested = Suggestions.Items.Cast<SuggestionRow>().First(s => s.Choice.IsService && s.Choice.Rule.ServiceId == "discord");
-        Suggestion_Click(new Button { DataContext = suggested }, new RoutedEventArgs());
+        DomainInput.Focus();
+        void SearchKey(Key key)
+        {
+            var args = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(DomainInput), Environment.TickCount, key) { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+            DomainInput.RaiseEvent(args);
+            if (!args.Handled) throw new InvalidOperationException("Search preview keyboard handler must consume navigation keys");
+        }
+        SearchKey(Key.Down);
+        if (Suggestions.SelectedItem is not SuggestionRow selected || selected.Choice.Rule.ServiceId != "discord" || !DomainInput.IsKeyboardFocused)
+            throw new InvalidOperationException("Arrow navigation must select a suggestion without stealing input focus");
+        SearchKey(Key.Enter);
         if (settings.Sites.Count != 2 || settings.Sites.Last().ServiceId != "discord" || DomainInput.Text.Length != 0 || SearchPopup.IsOpen) throw new InvalidOperationException("Service suggestion selection failed");
         ShowSuggestions();
         if (!Suggestions.Items.Cast<SuggestionRow>().Any(s => s.Choice.Rule.ServiceId == "discord" && s.Added)) throw new InvalidOperationException("Already added services must remain visible");

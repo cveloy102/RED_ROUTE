@@ -1,5 +1,7 @@
 param([Parameter(Mandatory)][string]$Go, [Parameter(Mandatory)][string]$Source)
 $ErrorActionPreference = 'Stop'
+& $Go mod download -C $Source github.com/amnezia-vpn/amneziawg-go/v3
+if ($LASTEXITCODE -ne 0) { throw 'Cannot download pinned AWG module' }
 $modulePath = & $Go list -C $Source -m -f '{{.Dir}}' github.com/amnezia-vpn/amneziawg-go/v3
 if ($LASTEXITCODE -ne 0 -or !$modulePath) { throw 'Cannot locate pinned AWG module' }
 $localModule = Join-Path $Source 'redroute-deps/amneziawg-go'
