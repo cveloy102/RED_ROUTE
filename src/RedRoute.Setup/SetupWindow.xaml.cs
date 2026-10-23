@@ -61,7 +61,7 @@ public partial class SetupWindow : Window
             }
             Close(); return;
         }
-        installing = true; MainButton.IsEnabled = false; ProgressArea.Visibility = Visibility.Visible;
+        installing = true; worker.ResetCancellation(); MainButton.IsEnabled = false; ProgressArea.Visibility = Visibility.Visible;
         Heading.Text = updating ? "Обновляем RED_ROUTE" : "Устанавливаем RED_ROUTE"; Description.Text = "Это окно останется открытым до завершения. Обычно установка занимает меньше минуты.";
         Note.Text = "Не выключайте компьютер. Настройки и профили сохранятся при обновлении.";
         try

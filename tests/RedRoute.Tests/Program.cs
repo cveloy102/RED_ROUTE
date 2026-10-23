@@ -84,6 +84,13 @@ try { await PipeProtocol.ReadAsync<ServiceRequest>(oversized, default); throw ne
 var destination = Path.Combine(Environment.CurrentDirectory, "artifacts", "checks"); Directory.CreateDirectory(destination);
 await ReliabilityChecks.RunAsync(config, Assert);
 await UpdateChecks.RunAsync(Assert);
+await ReleaseValidationChecks.RunAsync(config, Assert);
+await OperationChecks.RunAsync(Assert);
+await CatalogNetworkChecks.RunAsync(Assert);
+InputMatrixChecks.Run(config, Assert);
+StorageChecks.Run(config, Assert);
+await FailoverMatrixChecks.RunAsync(config, Assert);
+if (args.Contains("--native-lab")) await NativeCoreLab.RunAsync(Assert);
 foreach (var (name, awg, mode, capture) in new[] { ("awg-auto", true, RouteMode.Auto, true), ("awg-probe", true, RouteMode.Auto, false), ("awg-on", true, RouteMode.On, true), ("wg-auto", false, RouteMode.Auto, true) })
 {
     settings.Mode = mode;

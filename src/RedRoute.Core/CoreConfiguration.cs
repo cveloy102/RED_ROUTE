@@ -21,6 +21,7 @@ public static class CoreConfiguration
             ["mtu"] = profile.Interface.TryGetValue("MTU", out var mtu) ? int.Parse(mtu) : 1280,
             ["peers"] = new JsonArray(peer), ["domain_resolver"] = "remote"
         };
+        if (profile.Interface.TryGetValue("ListenPort", out var listenPort)) endpoint["listen_port"] = int.Parse(listenPort);
         if (profile.IsAmnezia)
         {
             endpoint["useIntegratedTun"] = false;

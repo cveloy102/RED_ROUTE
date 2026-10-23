@@ -17,3 +17,16 @@ Assert-MsiRow 'SELECT `Control` FROM `Control` WHERE `Dialog_` = ''RedRouteSucce
 Assert-MsiRow 'SELECT `Name` FROM `ServiceInstall` WHERE `Name` = ''RED_ROUTE''' 'Per-machine Windows service remains in package'
 Assert-MsiRow 'SELECT `ServiceName` FROM `Wix4ServiceConfig` WHERE `ServiceName` = ''RED_ROUTE'' AND `FirstFailureActionType` = ''restart'' AND `RestartServiceDelayInSeconds` = 5' 'Unexpected service failures trigger automatic restart after five seconds'
 Assert-MsiRow 'SELECT `Property` FROM `Property` WHERE `Property` = ''ALLUSERS'' AND `Value` = ''1''' 'Installation still requires machine-wide privileges'
+Assert-MsiRow 'SELECT `Name` FROM `Registry` WHERE `Name` = ''OwnerSid'' AND `Value` = ''[REDROUTEOWNER]''' 'Service ownership uses the interactive user rather than elevated installer credentials'
+Assert-MsiRow 'SELECT `Name` FROM `RegLocator` WHERE `Name` = ''OwnerSid''' 'Upgrade locates and preserves the existing owner'
+Assert-MsiRow 'SELECT `Name` FROM `ServiceControl` WHERE `Name` = ''RED_ROUTE'' AND `Event` = 163 AND `Wait` = 1' 'Install, upgrade and uninstall wait for orderly service shutdown'
+$secure = $database.OpenView('SELECT `Value` FROM `Property` WHERE `Property` = ''SecureCustomProperties'''); $secure.Execute()
+$secureRow = $secure.Fetch()
+if ($null -eq $secureRow -or $secureRow.StringData(1).Split(';') -notcontains 'REDROUTEOWNER') { throw 'Installer owner property must survive elevation' }
+$secure.Close(); Write-Output 'PASS: Owner identity survives Windows Installer elevation'
+$files = $database.OpenView('SELECT `FileName` FROM `File`'); $files.Execute()
+while ($null -ne ($file = $files.Fetch())) {
+    $name = $file.StringData(1).Split('|')[-1]
+    if ($name -match '(?i)(lab-server|synthetic|\.conf$|settings\.dpapi$|\.pdb$)') { throw "Unexpected test or private file in installer: $name" }
+}
+$files.Close(); Write-Output 'PASS: No lab executables, profiles, private settings or debug symbols are shipped'

@@ -107,11 +107,25 @@ public partial class MainWindow : Window
         timer.Tick += async (_, _) => await PollAsync();
         Loaded += async (_, _) =>
         {
-            if (smoke) { if (!preview) await SmokeTestAsync(); return; }
-            timer.Start(); await PollAsync(); _ = CheckUpdatesAsync(false); updateTimer.Start();
+            if (!smoke || preview) return;
+            try
+            {
+                if (Environment.GetCommandLineArgs().Contains("--smoke-test-failure")) throw new InvalidOperationException("Synthetic smoke failure");
+                await SmokeTestAsync();
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    var folder = Path.Combine(Environment.CurrentDirectory, "artifacts", "ui"); Directory.CreateDirectory(folder);
+                    File.WriteAllText(Path.Combine(folder, "result.txt"), "FAIL: " + ex.GetType().Name + ": " + ex.Message);
+                }
+                finally { ExitWithCode(1); }
+            }
         };
         updateTimer.Tick += async (_, _) => await CheckUpdatesAsync(false);
-        if (!smoke) timer.Start();
+        // A --tray window is never shown, so Loaded is not a startup signal.
+        if (!smoke) { timer.Start(); updateTimer.Start(); _ = PollAsync(); _ = CheckUpdatesAsync(false); }
     }
     private void OpenWindow() { Show(); WindowState = WindowState.Normal; Activate(); }
     private void TitleMin_Click(object sender, RoutedEventArgs e) => SystemCommands.MinimizeWindow(this);
@@ -224,6 +238,7 @@ public partial class MainWindow : Window
         var previous = tray.Icon; tray.Icon = TrayIcon.Create(mode, phase); previous?.Dispose();
         var caption = phase switch { ConnectionPhase.Connected => mode == RouteMode.On ? "Вкл · весь интернет через VPN" : "Авто · только из списка", ConnectionPhase.Connecting => "Подключение · пока напрямую", ConnectionPhase.Off => "Выкл · интернет напрямую", _ => "VPN недоступен · интернет напрямую" };
         tray.Text = ("RED_ROUTE · " + caption)[..Math.Min(63, ("RED_ROUTE · " + caption).Length)];
+        if (tray.ContextMenuStrip?.Visible == true) return;
         var menu = new Forms.ContextMenuStrip { BackColor = System.Drawing.Color.FromArgb(24, 24, 24), ForeColor = System.Drawing.Color.FromArgb(232, 228, 217), ShowImageMargin = true };
         menu.Items.Add(new Forms.ToolStripMenuItem(caption) { Enabled = false });
         menu.Items.Add(new Forms.ToolStripSeparator());
@@ -241,7 +256,6 @@ public partial class MainWindow : Window
         menu.Items.Add("Выключить VPN и выйти", null, async (_, _) => await Dispatcher.InvokeAsync(async () => { if (await RecoverAsync()) Exit(); }).Task.Unwrap());
         var old = tray.ContextMenuStrip;
         // Do not replace an open native menu while the user is selecting a command.
-        if (old?.Visible == true) { menu.Dispose(); return; }
         tray.ContextMenuStrip = menu;
         if (old != null) { foreach (Forms.ToolStripItem item in old.Items) item.Image?.Dispose(); old.Dispose(); }
     }
@@ -249,8 +263,18 @@ public partial class MainWindow : Window
     private async void Domain_KeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key == Key.Escape) { SearchPopup.IsOpen = false; e.Handled = true; }
-        else if (e.Key == Key.Down && SearchPopup.IsOpen) { Suggestions.Focus(); if (Suggestions.Items.Count > 0) Suggestions.SelectedIndex = 0; e.Handled = true; }
-        else if (e.Key == Key.Enter) { e.Handled = true; await AddDomainAsync(); }
+        else if (e.Key is Key.Down or Key.Up && SearchPopup.IsOpen)
+        {
+            Suggestions.SelectedIndex = Math.Clamp(Suggestions.SelectedIndex + (e.Key == Key.Down ? 1 : -1), -1, Suggestions.Items.Count - 1);
+            if (Suggestions.SelectedItem != null) Suggestions.ScrollIntoView(Suggestions.SelectedItem);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            if (SearchPopup.IsOpen && Suggestions.SelectedItem is SuggestionRow row) Suggestion_Click(new Button { DataContext = row }, new RoutedEventArgs());
+            else await AddDomainAsync();
+        }
     }
     private async Task AddDomainAsync()
     {
@@ -328,15 +352,12 @@ public partial class MainWindow : Window
         {
             if (manual) Notice("Обновляем базу сервисов…");
             await catalog.RefreshAsync(settings.Sites, lifetime.Token);
-            for (var i = 0; i < settings.Sites.Count; i++)
-            {
-                var old = settings.Sites[i]; if (old.ServiceId != null && old.Domains.FirstOrDefault() is { } first && catalog.Find(first) is { } updated && updated.ServiceId == old.ServiceId) settings.Sites[i] = updated;
-            }
+            settings.Sites = SettingsCommands.RefreshServices(settings, catalog.GetById).Sites;
             settings.DatabaseUpdated = catalog.Updated; SecureStore.Save(settings); UpdateLists();
             if (settings.Mode != RouteMode.Off) await ApplyAsync(preserveMode: true);
             if (manual) Notice("База обновлена. Собственные правила сохранены.");
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or JsonException or OperationCanceledException or FormatException)
+        catch (Exception ex) when (ex is HttpRequestException or IOException or UnauthorizedAccessException or JsonException or OperationCanceledException or FormatException or System.Security.Cryptography.CryptographicException)
         { if (manual) Notice("Не удалось обновить базу. Продолжаем использовать предыдущую версию."); }
         finally { refreshingCatalog = false; }
     }
@@ -388,7 +409,7 @@ public partial class MainWindow : Window
         {
             var report = new
             {
-                App = "RED_ROUTE", Version = "0.1.8", Time = DateTimeOffset.Now, OS = Environment.OSVersion.VersionString,
+                App = "RED_ROUTE", Version = InstalledVersion.ToString(3), Time = DateTimeOffset.Now, OS = Environment.OSVersion.VersionString,
                 Architecture = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString(),
                 Status = status, Profiles = settings.Profiles.Select((p, i) => new { Position = i + 1, p.Name, Protocol = ConfParser.Parse(p.Config).IsAmnezia ? "AmneziaWG" : "WireGuard" }),
                 SiteRuleCount = settings.Sites.Count, DatabaseUpdated = settings.DatabaseUpdated,
@@ -413,7 +434,8 @@ public partial class MainWindow : Window
         return AppDialog.Prompt(this, title, value);
     }
     private void Window_Closing(object? sender, CancelEventArgs e) { if (!exiting) { e.Cancel = true; Hide(); } }
-    private void Exit() { exiting = true; lifetime.Cancel(); timer.Stop(); updateTimer.Stop(); SearchPopup.IsOpen = false; tray.Visible = false; tray.Icon?.Dispose(); tray.Dispose(); Close(); System.Windows.Application.Current.Shutdown(); }
+    private void Exit() => ExitWithCode(0);
+    private void ExitWithCode(int code) { exiting = true; lifetime.Cancel(); timer.Stop(); updateTimer.Stop(); SearchPopup.IsOpen = false; tray.Visible = false; tray.Icon?.Dispose(); tray.Dispose(); Close(); System.Windows.Application.Current.Shutdown(code); }
     private async Task SmokeTestAsync()
     {
         DomainInput.Text = "https://example.org/path"; await AddDomainAsync();
@@ -482,7 +504,11 @@ public partial class MainWindow : Window
             var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(image));
             using var stream = File.Create(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", name + ".png")); png.Save(stream);
         }
-        File.WriteAllText(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", "result.txt"), "PASS: native WPF rendering, domain normalization, invalid domain rejection, service suggestions/selection, complete dropdown catalogue, already-added entries, themed update/import/deletion dialogs. No service, recovery, or network commands executed.");
+        Close();
+        if (IsVisible || exiting) throw new InvalidOperationException("Closing the main window must hide it without exiting or stopping VPN");
+        OpenWindow(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+        if (!IsVisible) throw new InvalidOperationException("Tray reopen must restore the hidden window");
+        File.WriteAllText(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", "result.txt"), "PASS: native WPF rendering, domain normalization, invalid domain rejection, service suggestions/selection, complete dropdown catalogue, page and catalogue scrolling, already-added entries, themed update/import/deletion dialogs, close-to-tray and reopen. No service, recovery, or network commands executed.");
         Exit();
     }
 }

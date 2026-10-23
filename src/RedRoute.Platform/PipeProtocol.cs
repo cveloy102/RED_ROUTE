@@ -20,7 +20,8 @@ public static class PipeProtocol
         var size = BinaryPrimitives.ReadInt32LittleEndian(header);
         if (size < 1 || size > Protocol.MaximumMessageBytes) throw new IOException("Некорректная длина сообщения.");
         var data = new byte[size]; await stream.ReadExactlyAsync(data, token);
-        return JsonSerializer.Deserialize<T>(data, Protocol.Json) ?? throw new IOException("Пустое сообщение.");
+        try { return JsonSerializer.Deserialize<T>(data, Protocol.Json) ?? throw new IOException("Пустое сообщение."); }
+        catch (JsonException ex) { throw new IOException("Некорректное сообщение службы.", ex); }
     }
     public static async Task<ServiceResponse> CallAsync(ServiceRequest request, CancellationToken token = default)
     {

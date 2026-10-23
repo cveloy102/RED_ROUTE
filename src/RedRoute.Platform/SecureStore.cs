@@ -23,8 +23,9 @@ public static class SecureStore
         dir.SetAccessControl(acl);
     }
     public static ClientSettings Load(bool machine = false)
+        => LoadFrom(Path.Combine(machine ? ServiceDirectory : UserDirectory, "settings.dpapi"), machine);
+    internal static ClientSettings LoadFrom(string path, bool machine = false)
     {
-        var path = Path.Combine(machine ? ServiceDirectory : UserDirectory, "settings.dpapi");
         if (!File.Exists(path)) return new();
         if (new FileInfo(path).Length > Protocol.MaximumMessageBytes) throw new IOException("Слишком большой файл настроек.");
         var bytes = ProtectedData.Unprotect(File.ReadAllBytes(path), "RED_ROUTE.settings.v1"u8.ToArray(), machine ? DataProtectionScope.LocalMachine : DataProtectionScope.CurrentUser);
@@ -36,18 +37,24 @@ public static class SecureStore
         finally { CryptographicOperations.ZeroMemory(bytes); }
     }
     public static void Save(ClientSettings settings, bool machine = false)
+        => SaveTo(settings, machine ? ServiceDirectory : UserDirectory, machine);
+    internal static void SaveTo(ClientSettings settings, string folder, bool machine = false)
     {
         settings.Validate();
-        var folder = machine ? ServiceDirectory : UserDirectory;
         Directory.CreateDirectory(folder);
         var bytes = JsonSerializer.SerializeToUtf8Bytes(settings, Protocol.Json);
+        string? temporary = null;
         try
         {
             var data = ProtectedData.Protect(bytes, "RED_ROUTE.settings.v1"u8.ToArray(), machine ? DataProtectionScope.LocalMachine : DataProtectionScope.CurrentUser);
-            var temporary = Path.Combine(folder, "settings." + Guid.NewGuid().ToString("N") + ".tmp");
+            temporary = Path.Combine(folder, "settings." + Guid.NewGuid().ToString("N") + ".tmp");
             File.WriteAllBytes(temporary, data);
             File.Move(temporary, Path.Combine(folder, "settings.dpapi"), true);
         }
-        finally { CryptographicOperations.ZeroMemory(bytes); }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(bytes);
+            if (temporary != null && File.Exists(temporary)) File.Delete(temporary);
+        }
     }
 }

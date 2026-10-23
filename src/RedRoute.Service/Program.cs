@@ -44,45 +44,9 @@ static class ServiceHost
         var controller = new FailoverController(engine, journal.Load(), journal.Save);
         ClientSettings settings;
         try { settings = SecureStore.Load(true); } catch { settings = new(); }
-        using var stateLock = new SemaphoreSlim(1, 1);
         using var cycle = CancellationTokenSource.CreateLinkedTokenSource(stop);
-        var activeSync = new object();
-        CancellationTokenSource? active = null;
-        Task operation = Task.CompletedTask;
-        Task Schedule(Func<CancellationToken, Task> action, bool preempt)
-        {
-            lock (activeSync)
-            {
-                if (!preempt && active != null) return Task.CompletedTask;
-                active?.Cancel();
-                var actionSource = CancellationTokenSource.CreateLinkedTokenSource(cycle.Token);
-                active = actionSource;
-                operation = Task.Run(async () =>
-                {
-                    var held = false;
-                    try
-                    {
-                        await stateLock.WaitAsync(actionSource.Token); held = true;
-                        await action(actionSource.Token);
-                    }
-                    catch (OperationCanceledException) when (actionSource.IsCancellationRequested)
-                    {
-                        if (held) try { await controller.InterruptedAsync("operation_cancelled"); } catch (Exception ex) when (ex is not OutOfMemoryException) { }
-                    }
-                    catch (Exception ex) when (ex is not OutOfMemoryException)
-                    {
-                        // A failed operation must release the tunnel and leave the periodic monitor alive.
-                        if (held) try { await controller.InterruptedAsync("operation_failed_" + ex.GetType().Name); } catch (Exception cleanup) when (cleanup is not OutOfMemoryException) { }
-                    }
-                    finally
-                    {
-                        if (held) stateLock.Release();
-                        lock (activeSync) { if (ReferenceEquals(active, actionSource)) active = null; actionSource.Dispose(); }
-                    }
-                }, CancellationToken.None);
-                return operation;
-            }
-        }
+        await using var operations = new OperationQueue(cycle.Token, controller.InterruptedAsync);
+        Task Schedule(Func<CancellationToken, Task> action, bool preempt) => operations.Schedule(action, preempt);
         var monitor = Task.Run(async () =>
         {
             try
@@ -135,7 +99,7 @@ static class ServiceHost
         {
             cycle.Cancel();
             await monitor;
-            await operation;
+            await operations.ShutdownAsync();
             await engine.StopAsync(CancellationToken.None);
         }
     }

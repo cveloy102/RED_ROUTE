@@ -17,14 +17,16 @@ public sealed class ServiceCatalog
     private sealed record SeedService(string id, string name, string[] domains);
     private sealed record Seed(SeedService[] services);
     private readonly string cachePath;
+    private readonly HttpClient? httpClient;
     private HashSet<string> hiddenDomains = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, SiteRule> services = new(StringComparer.OrdinalIgnoreCase);
     private CatalogChoice[]? searchIndex;
     public DateTimeOffset? Updated { get; private set; }
     private static readonly Dictionary<string, string> Aliases = new(StringComparer.OrdinalIgnoreCase)
     { ["youtube.com"] = "youtube", ["youtu.be"] = "youtube", ["t.me"] = "telegram", ["telegram.org"] = "telegram", ["chatgpt.com"] = "openai", ["openai.com"] = "openai", ["discord.com"] = "discord", ["github.com"] = "github" };
-    public ServiceCatalog(string? cacheFile = null)
+    public ServiceCatalog(string? cacheFile = null, HttpClient? httpClient = null)
     {
+        this.httpClient = httpClient;
         cachePath = cacheFile ?? Path.Combine(SecureStore.UserDirectory, "catalog.json");
         using (var stream = typeof(ServiceCatalog).Assembly.GetManifestResourceStream("RedRoute.Platform.Resources.hidden-domains.txt")!)
         using (var reader = new StreamReader(stream))
@@ -44,19 +46,20 @@ public sealed class ServiceCatalog
                 var cached = JsonSerializer.Deserialize<CachedCatalog>(File.ReadAllText(cachePath));
                 if (cached?.Services != null)
                 {
+                    // Validate the complete cache before it can replace any bundled entries.
+                    foreach (var rule in cached.Services.Values) new ClientSettings { Sites = [rule] }.Validate();
                     AddHiddenDomains(hiddenDomains, cached.HiddenDomains ?? []);
                     foreach (var item in cached.Services.Values.Where(s => IsHiddenService(s.ServiceId ?? "", s.Name)))
                         AddHiddenDomains(hiddenDomains, item.Domains);
                     foreach (var item in cached.Services)
                     {
-                        new ClientSettings { Sites = [item.Value] }.Validate();
                         services[item.Key] = item.Value;
                     }
                     Updated = cached.Updated;
                 }
             }
         }
-        catch (Exception ex) when (ex is IOException or JsonException or FormatException or ArgumentException) { }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or FormatException or ArgumentException) { }
         FilterCatalog(services, hiddenDomains);
     }
     private static bool IsHiddenService(string id, string name) =>
@@ -64,7 +67,7 @@ public sealed class ServiceCatalog
     private static void AddHiddenDomains(HashSet<string> destination, IEnumerable<string> values)
     {
         foreach (var value in values)
-            try { destination.Add(Domains.Normalize(value.Trim())); }
+            try { destination.Add(Domains.Normalize(value)); }
             catch (Exception ex) when (ex is FormatException or ArgumentException) { }
     }
     private static bool IsHiddenDomain(string domain, HashSet<string> excluded)
@@ -89,9 +92,15 @@ public sealed class ServiceCatalog
     }
     public SiteRule? Find(string domain)
     {
+        domain = Domains.Normalize(domain);
+        if (IsHiddenDomain(domain, hiddenDomains)) return null;
         if (Aliases.TryGetValue(domain, out var id) && services.TryGetValue(id, out var rule)) return rule;
-        return services.Values.FirstOrDefault(s => s.Domains.Any(d => domain == d || domain.EndsWith("." + d, StringComparison.Ordinal)));
+        return services.Values.Select(s => new { Rule = s, Match = s.Domains.Where(d => domain == d || domain.EndsWith("." + d, StringComparison.Ordinal)).Select(d => d.Length).DefaultIfEmpty(0).Max() })
+            .Where(s => s.Match > 0).OrderByDescending(s => s.Match)
+            .ThenBy(s => s.Rule.ServiceId?.StartsWith("category-", StringComparison.OrdinalIgnoreCase) == true)
+            .ThenBy(s => s.Rule.Domains.Length).Select(s => s.Rule).FirstOrDefault();
     }
+    public SiteRule? GetById(string id) => services.GetValueOrDefault(id);
     public IReadOnlyList<SiteRule> Suggest(string query)
     {
         query = query.Trim();
@@ -115,15 +124,23 @@ public sealed class ServiceCatalog
     }
     public async Task RefreshAsync(IEnumerable<SiteRule> selected, CancellationToken token)
     {
-        using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(25) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("RED_ROUTE/0.1");
+        var selectedIds = selected.Where(s => s.ServiceId != null).Select(s => s.ServiceId!).ToArray();
+        using var ownedClient = httpClient == null ? new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(25) } : null;
+        var client = httpClient ?? ownedClient!;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token); deadline.CancelAfter(TimeSpan.FromMinutes(3)); token = deadline.Token;
         using var reference = JsonDocument.Parse(await Download(client, "https://api.github.com/repos/Ground-Zerro/Geo-Aggregator/git/ref/heads/main", 300000, token));
-        var sha = reference.RootElement.GetProperty("object").GetProperty("sha").GetString()!;
+        if (reference.RootElement.ValueKind != JsonValueKind.Object || !reference.RootElement.TryGetProperty("object", out var obj)
+            || obj.ValueKind != JsonValueKind.Object || !obj.TryGetProperty("sha", out var shaValue) || shaValue.ValueKind != JsonValueKind.String)
+            throw new IOException("Некорректная версия базы.");
+        var sha = shaValue.GetString()!;
         if (sha.Length != 40 || sha.Any(c => !char.IsAsciiHexDigit(c))) throw new IOException("Некорректная версия базы.");
         var prefix = "https://raw.githubusercontent.com/Ground-Zerro/Geo-Aggregator/" + sha + "/";
         var catalog = JsonSerializer.Deserialize<CatalogRoot>(await Download(client, prefix + "db/catalog.json", 600000, token)) ?? throw new IOException("Пустой каталог.");
-        if (catalog.version != 1 || catalog.services.Length > 2000) throw new IOException("Неизвестный формат базы.");
-        var ids = Aliases.Values.Concat(selected.Where(s => s.ServiceId != null).Select(s => s.ServiceId!)).Distinct();
+        if (catalog.version != 1 || catalog.services == null || catalog.services.Length > 2000
+            || catalog.services.Any(s => s == null || string.IsNullOrWhiteSpace(s.id) || string.IsNullOrWhiteSpace(s.name) || string.IsNullOrWhiteSpace(s.src)
+                || s.id.Length > 200 || s.name.Length > 253 || s.name.Any(char.IsControl))) throw new IOException("Неизвестный формат базы.");
+        if (catalog.services.Select(s => s.id).Distinct(StringComparer.OrdinalIgnoreCase).Count() != catalog.services.Length) throw new IOException("Повторяющиеся сервисы базы.");
+        var ids = Aliases.Values.Concat(selectedIds).Distinct();
         var next = new Dictionary<string, SiteRule>(services, StringComparer.OrdinalIgnoreCase);
         var nextHidden = new HashSet<string>(hiddenDomains, StringComparer.OrdinalIgnoreCase);
         // Refresh the exclusion list too, before merging any updated services.
@@ -144,13 +161,15 @@ public sealed class ServiceCatalog
         FilterCatalog(next, nextHidden);
         var snapshot = new CachedCatalog(DateTimeOffset.UtcNow, sha, next, nextHidden.ToArray());
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(cachePath))!);
-        var tmp = cachePath + ".tmp";
-        await File.WriteAllTextAsync(tmp, JsonSerializer.Serialize(snapshot), token); File.Move(tmp, cachePath, true);
+        var tmp = cachePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try { await File.WriteAllTextAsync(tmp, JsonSerializer.Serialize(snapshot), token); token.ThrowIfCancellationRequested(); File.Move(tmp, cachePath, true); }
+        finally { if (File.Exists(tmp)) File.Delete(tmp); }
         services = next; hiddenDomains = nextHidden; searchIndex = null; Updated = snapshot.Updated;
     }
     private static void ValidateSource(string source)
     {
-        if (source.Contains("..") || source.StartsWith('/') || source.Contains(':') || source.Contains('\\')) throw new IOException("Небезопасный путь базы.");
+        if (source.Length > 300 || source.Contains("..") || source.StartsWith('/') || source.Contains(':') || source.Contains('\\')
+            || source.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '/' or '-' or '_' or '.'))) throw new IOException("Небезопасный путь базы.");
     }
     private static SiteRule ParseService(string name, string id, IEnumerable<string> values)
     {
@@ -173,7 +192,9 @@ public sealed class ServiceCatalog
     }
     private static async Task<byte[]> Download(HttpClient client, string url, int limit, CancellationToken token)
     {
-        using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, token); response.EnsureSuccessStatusCode();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token); deadline.CancelAfter(TimeSpan.FromSeconds(25)); token = deadline.Token;
+        using var request = new HttpRequestMessage(HttpMethod.Get, url); request.Headers.UserAgent.ParseAdd("RED_ROUTE/0.1");
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token); response.EnsureSuccessStatusCode();
         if (response.Content.Headers.ContentLength > limit) throw new IOException("База слишком большая.");
         await using var stream = await response.Content.ReadAsStreamAsync(token); using var buffer = new MemoryStream();
         var chunk = new byte[8192]; int count;

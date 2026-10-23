@@ -19,6 +19,11 @@ public sealed class GitHubUpdates
     public GitHubUpdates(HttpClient? client = null) => this.client = client ?? SharedClient;
     public static ReleaseUpdate? Parse(string json, Version installed)
     {
+        try { return ParseMetadata(json, installed); }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or KeyNotFoundException or FormatException or OverflowException or ArgumentException) { return null; }
+    }
+    private static ReleaseUpdate? ParseMetadata(string json, Version installed)
+    {
         using var doc = JsonDocument.Parse(json); var root = doc.RootElement;
         if (root.GetProperty("draft").GetBoolean() || root.GetProperty("prerelease").GetBoolean()) return null;
         var tag = root.GetProperty("tag_name").GetString() ?? "";

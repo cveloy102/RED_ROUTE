@@ -26,3 +26,10 @@ from `cveloy102/autoturn-macos/Resources/Routing/seed.json` (Geo-Aggregator data
 daily refresh replaces service lists while preserving separately added manual rules.
 
 RED_ROUTE is an independent client and is not endorsed by the projects above.
+
+The pinned amneziawg-go v3.1.20260828 dependency is copied into the engine source
+archive and patched by scripts/engine/patch-awg.ps1. The patch refreshes S4 after
+a blocked TUN read and relocates payload before encryption, avoiding loss of
+the first packet after configuration. The complete patched module and its MIT
+license are included in the corresponding engine source archive. Upstream
+device packet/handshake/concurrency tests run before each build.

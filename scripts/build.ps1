@@ -6,7 +6,7 @@ try {
     if (!$SkipEngine) { & "$PSScriptRoot/build-engine.ps1" }
     dotnet build RED_ROUTE.sln -c Release --nologo
     if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
-    dotnet run --project tests/RedRoute.Tests -c Release --no-build
+    dotnet run --project tests/RedRoute.Tests -c Release --no-build -- --native-lab
     if ($LASTEXITCODE -ne 0) { throw 'Checks failed' }
     $publish = Join-Path $root 'artifacts/publish'
     dotnet publish src/RedRoute.App -c Release -r win-x64 --self-contained true -o $publish -p:PublishSingleFile=false --nologo

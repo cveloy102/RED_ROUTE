@@ -1,4 +1,4 @@
-param([string]$Go = "$PSScriptRoot/../.tools/go/bin/go.exe")
+param([string]$Go = "$PSScriptRoot/../.tools/go1.26.10/go/bin/go.exe")
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path "$PSScriptRoot/..").Path
 $revision = '16724484cfa00d9b2c14d8280dc055564e2e12ba'
@@ -76,10 +76,16 @@ if (!$fakeIpText.Contains('allocationAccess sync.Mutex')) {
     [IO.File]::WriteAllText($fakeIpFile, $fakeIpText, [Text.UTF8Encoding]::new($false))
 }
 Copy-Item -LiteralPath "$PSScriptRoot/engine/fakeip_store_test.go" -Destination "$source/dns/transport/fakeip/redroute_store_test.go" -Force
-& $Go test -C $source ./dns/transport/fakeip -run '^TestRedRoute' -count=1
+& "$PSScriptRoot/engine/patch-awg.ps1" -Go $Go -Source $source
+& $Go test -C $source ./dns/transport/fakeip ./protocol/awg -count=1 -timeout=90s
 if ($LASTEXITCODE -ne 0) { throw 'DNS crash durability checks failed' }
-& $Go build -C $source -tags 'with_gvisor,with_quic,with_wireguard,with_awg' -trimpath -ldflags '-s -w -X github.com/sagernet/sing-box/constant.Version=1.260910.0-redroute3' -o "$destination/amnezia-box.exe" ./cmd/sing-box
+& $Go test -C $source github.com/amnezia-vpn/amneziawg-go/v3/device -run '^(TestTwoDevicePing|TestAWGDevicePing|TestNoiseHandshake|TestConcurrencySafety|TestUpDown)$' -count=1 -timeout=90s
+if ($LASTEXITCODE -ne 0) { throw 'AWG packet and concurrency checks failed' }
+& $Go build -C $source -tags 'with_gvisor,with_quic,with_wireguard,with_awg' -trimpath -ldflags '-s -w -X github.com/sagernet/sing-box/constant.Version=1.260910.0-redroute4' -o "$destination/amnezia-box.exe" ./cmd/sing-box
 if ($LASTEXITCODE -ne 0) { throw 'VPN core build failed' }
+New-Item -ItemType Directory -Force "$root/artifacts/checks" | Out-Null
+& $Go build -C $source -trimpath -o "$root/artifacts/checks/redroute-lab-server.exe" "$root/tools/native-lab-server/main.go"
+if ($LASTEXITCODE -ne 0) { throw 'Userspace integration fixture build failed' }
 Copy-Item -LiteralPath "$source/LICENSE" -Destination "$destination/AMNEZIA-BOX-LICENSE.txt"
 & $Go version -m "$destination/amnezia-box.exe" | Set-Content "$destination/build-info.txt"
 & "$destination/amnezia-box.exe" version

@@ -62,10 +62,26 @@ public static partial class ConfParser
             if (key.Equals("MTU", StringComparison.OrdinalIgnoreCase)) ValidateNumber(value, 1280, 9000, key);
             else if (key.Equals("ListenPort", StringComparison.OrdinalIgnoreCase)) ValidateNumber(value, 0, 65535, key);
             else if (new[] { "Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4" }.Contains(key, StringComparer.OrdinalIgnoreCase)) ValidateNumber(value, 0, 65535, key);
-            else if (key.Length == 2 && key[0] is 'H' or 'h' && "1234".Contains(key[1]) && !HeaderValue().IsMatch(value)) throw new FormatException("Некорректный диапазон H.");
+            else if (key.Length == 2 && key[0] is 'H' or 'h' && "1234".Contains(key[1]))
+            {
+                _ = ParseRange(value, key);
+            }
             else if (key.Length == 2 && key[0] is 'I' or 'i' && "12345".Contains(key[1]) && (value.Length > 4096 || value.Any(char.IsControl))) throw new FormatException("Некорректный I-параметр.");
             else if (key.Equals("HeaderProtectionKey", StringComparison.OrdinalIgnoreCase)) ValidateKey(value);
-            else if (key is "RandomTrailers" or "DisableCookies" && !bool.TryParse(value, out _)) throw new FormatException("Некорректный логический параметр.");
+            else if ((key.Equals("RandomTrailers", StringComparison.OrdinalIgnoreCase) || key.Equals("DisableCookies", StringComparison.OrdinalIgnoreCase)) && !bool.TryParse(value, out _)) throw new FormatException("Некорректный логический параметр.");
+            else if (new[] { "ContentPaddingAddition", "RekeyAfterTime", "RekeyTimeout", "RejectAfterTime", "KeepaliveTimeout", "MaxHandshakeAttempts" }.Contains(key, StringComparer.OrdinalIgnoreCase)) _ = ParseRange(value, key);
+        }
+        if (parsed.IsAmnezia)
+        {
+            var ranges = Enumerable.Range(1, 4).Select(i => iface.TryGetValue("H" + i, out var h) ? ParseRange(h, "H" + i) : ((uint)i, (uint)i)).ToArray();
+            for (var i = 0; i < ranges.Length; i++)
+            for (var j = i + 1; j < ranges.Length; j++)
+                if (ranges[i].Item1 <= ranges[j].Item2 && ranges[j].Item1 <= ranges[i].Item2) throw new FormatException("Диапазоны H1–H4 не должны пересекаться.");
+            if (iface.ContainsKey("HeaderProtectionKey") && Enumerable.Range(1, 4).Any(i => !iface.TryGetValue("S" + i, out var s) || int.Parse(s) < 12))
+                throw new FormatException("Для HeaderProtectionKey каждый параметр S1–S4 должен быть не меньше 12.");
+            var minimum = iface.TryGetValue("Jmin", out var jmin) ? int.Parse(jmin) : 0;
+            var maximum = iface.TryGetValue("Jmax", out var jmax) ? int.Parse(jmax) : 0;
+            if (minimum > maximum) throw new FormatException("Jmin не должен быть больше Jmax.");
         }
         if (peer.TryGetValue("PersistentKeepalive", out var keep)) ValidateNumber(keep, 0, 65535, "PersistentKeepalive");
         return parsed;
@@ -78,6 +94,14 @@ public static partial class ConfParser
     private static void ValidateNumber(string value, int min, int max, string key)
     {
         if (!int.TryParse(value, out var n) || n < min || n > max) throw new FormatException($"Некорректный {key}.");
+    }
+    private static (uint, uint) ParseRange(string value, string key)
+    {
+        var bounds = value.Split('-');
+        if (!HeaderValue().IsMatch(value) || !uint.TryParse(bounds[0], out var first)
+            || !uint.TryParse(bounds[^1], out var last) || last < first)
+            throw new FormatException($"Некорректный диапазон {key}: нужны числа от 0 до 4294967295 по возрастанию.");
+        return (first, last);
     }
     [GeneratedRegex(@"^\d{1,10}(-\d{1,10})?$", RegexOptions.CultureInvariant)] private static partial Regex HeaderValue();
 }

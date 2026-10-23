@@ -15,9 +15,11 @@ internal sealed class InstallerWorker
     private bool backwards;
     private string phase = "Подготавливаем установку…";
     public void Cancel() => cancelled = true;
+    public void ResetCancellation() => cancelled = false;
     public uint Install()
     {
-        cancelled = false; total = position = 0; percent = 0;
+        total = position = 0; percent = 0;
+        var owner = InstallOwner.Resolve();
         var folder = Path.Combine(Path.GetTempPath(), "RED_ROUTE-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder); var msi = Path.Combine(folder, "RED_ROUTE.msi");
         var logs = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RED_ROUTE", "Installer"); Directory.CreateDirectory(logs);
@@ -41,7 +43,7 @@ internal sealed class InstallerWorker
             Native.MsiEnableLog(0x3fff, LogPath, 2);
             var registered = Native.MsiSetExternalUIRecord(callback, 0x0507, IntPtr.Zero, out var previousCallback);
             if (registered != 0) throw new IOException("Cannot monitor Windows Installer");
-            try { return Native.MsiInstallProduct(msi, "REBOOT=ReallySuppress"); }
+            try { return Native.MsiInstallProduct(msi, "REBOOT=ReallySuppress REDROUTEOWNER=" + owner); }
             finally
             {
                 Native.MsiSetExternalUIRecord(previousCallback, 0, IntPtr.Zero, out _); Native.MsiSetInternalUI(previousUi, IntPtr.Zero); Native.MsiEnableLog(0, null, 0); GC.KeepAlive(callback);
@@ -50,8 +52,12 @@ internal sealed class InstallerWorker
         finally
         {
             // Delete only the exact temporary payload created above; never recursively remove an installer directory.
-            if (File.Exists(msi)) File.Delete(msi);
-            if (Directory.Exists(folder)) Directory.Delete(folder);
+            try
+            {
+                if (File.Exists(msi)) File.Delete(msi);
+                if (Directory.Exists(folder)) Directory.Delete(folder);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* Temp cleanup must not turn a successful installation into an error. */ }
         }
     }
     private int OnMessage(IntPtr context, uint type, uint record)

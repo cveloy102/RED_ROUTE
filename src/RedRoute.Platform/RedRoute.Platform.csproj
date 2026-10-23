@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <InternalsVisibleTo Include="RedRoute.Tests" />
     <EmbeddedResource Include="Resources/seed.json" />
     <EmbeddedResource Include="Resources/hidden-domains.txt" />
     <ProjectReference Include="../RedRoute.Core/RedRoute.Core.csproj" />
