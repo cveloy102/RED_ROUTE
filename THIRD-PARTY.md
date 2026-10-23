@@ -33,3 +33,8 @@ a blocked TUN read and relocates payload before encryption, avoiding loss of
 the first packet after configuration. The complete patched module and its MIT
 license are included in the corresponding engine source archive. Upstream
 device packet/handshake/concurrency tests run before each build.
+
+Security updates are pinned by build-engine.ps1 to golang.org/x/net v0.60.0,
+golang.org/x/crypto v0.57.0 and golang.org/x/text v0.42.0. The engine is built
+with Go 1.26.10. The resulting go.mod/go.sum and dependency versions are shipped
+in the source archive and build-info.txt.

@@ -48,6 +48,10 @@ internal static class NativeCoreLab
                 assert(response == "VPN-LAB", protocol + "/" + mode + ": selected domain traverses an actual encrypted client/server connection");
                 response = await http.GetStringAsync($"http://selected-v6.test:{tunnelHttpPort}/probe");
                 assert(response == "VPN-LAB", protocol + "/" + mode + ": IPv6 traffic traverses the encrypted userspace tunnel");
+                var large = await http.GetStringAsync($"http://selected.test:{tunnelHttpPort}/large");
+                assert(large == string.Concat(Enumerable.Repeat("RED_ROUTE", 16384)), protocol + "/" + mode + ": a multi-packet 144 KiB response is reassembled without corruption");
+                var parallel = await Task.WhenAll(Enumerable.Range(0, 10).Select(_ => http.GetStringAsync($"http://selected.test:{tunnelHttpPort}/probe")));
+                assert(parallel.All(body => body == "VPN-LAB"), protocol + "/" + mode + ": ten parallel encrypted requests complete correctly");
                 response = await http.GetStringAsync($"http://127.0.0.1:{direct.Port}/probe");
                 assert(response == "DIRECT-LAB", protocol + "/" + mode + ": local network remains direct");
                 if (mode == RouteMode.Auto)

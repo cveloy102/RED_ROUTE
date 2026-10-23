@@ -33,6 +33,10 @@ func main() {
  if err != nil { panic(err) }
  server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
   w.Header().Set("Connection", "close")
+  if r.URL.Path == "/large" {
+   _, _ = w.Write([]byte(strings.Repeat("RED_ROUTE", 16384)))
+   return
+  }
   _, _ = w.Write([]byte("VPN-LAB"))
  })}
  go func() { _ = server.Serve(listener) }()

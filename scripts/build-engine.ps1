@@ -19,6 +19,9 @@ $env:GOOS = 'windows'
 $env:GOARCH = 'amd64'
 $env:GOPATH = Join-Path $root '.tools/gopath'
 $env:GOCACHE = Join-Path $root '.tools/gocache'
+# Pin fixes reported by govulncheck; preserve them in the distributed corresponding source.
+& $Go get -C $source golang.org/x/net@v0.60.0 golang.org/x/crypto@v0.57.0 golang.org/x/text@v0.42.0
+if ($LASTEXITCODE -ne 0) { throw 'Cannot apply pinned Go dependency security updates' }
 # Official AWG endpoint formatter needs brackets for an IPv6 endpoint literal.
 $endpointFile = Join-Path $source 'protocol/awg/endpoint.go'
 $endpointText = [IO.File]::ReadAllText($endpointFile)

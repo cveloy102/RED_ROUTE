@@ -5,6 +5,8 @@
   <MediaTemplate EmbedCab="yes" CompressionLevel="high"/>
   <Icon Id="RedRouteIcon" SourceFile="..\src\RedRoute.App\Assets\RedRoute.ico"/><Property Id="ARPPRODUCTICON" Value="RedRouteIcon"/>
   <Property Id="LAUNCHREDROUTE" Value="1"/>
+  <Property Id="REDROUTEOWNER" Secure="yes"><RegistrySearch Id="ExistingOwner" Root="HKLM" Key="SOFTWARE\RED_ROUTE" Name="OwnerSid" Type="raw" Bitness="always64"/></Property>
+  <SetProperty Id="REDROUTEOWNER" Value="[UserSID]" After="AppSearch" Sequence="both" Condition="NOT REDROUTEOWNER"/>
   <EnsureTable Id="ControlCondition"/>
   <CustomAction Id="OpenRedRoute" Directory="INSTALLFOLDER" ExeCommand="&quot;[INSTALLFOLDER]RED_ROUTE.exe&quot;" Execute="immediate" Impersonate="yes" Return="asyncNoWait"/>
   <UI>
@@ -49,7 +51,7 @@
     </Component>
    </Directory>
    <Component Id="OwnerRegistration" Bitness="always64" Guid="A899A48F-3B6C-47D3-9C84-A809F95B6002">
-    <RegistryValue Root="HKLM" Key="SOFTWARE\RED_ROUTE" Name="OwnerSid" Type="string" Value="[UserSID]" KeyPath="yes"/>
+    <RegistryValue Root="HKLM" Key="SOFTWARE\RED_ROUTE" Name="OwnerSid" Type="string" Value="[REDROUTEOWNER]" KeyPath="yes"/>
     <RegistryValue Root="HKLM" Key="SOFTWARE\RED_ROUTE" Name="InstallDirectory" Type="string" Value="[INSTALLFOLDER]"/>
    </Component>
   </Directory></StandardDirectory>
@@ -59,7 +61,7 @@
    <RemoveFolder Id="RemoveMenuFolder" On="uninstall"/>
    <RegistryValue Root="HKCU" Key="SOFTWARE\RED_ROUTE" Name="StartMenu" Value="1" Type="integer" KeyPath="yes"/>
   </Component></Directory></StandardDirectory>
-  <ComponentGroup Id="ApplicationFiles" Directory="INSTALLFOLDER"><Files Include="$(var.PublishDir)\**"><Exclude Files="$(var.PublishDir)\service\RED_ROUTE.Service.exe"/><Exclude Files="**\*.pdb"/></Files></ComponentGroup>
+  <ComponentGroup Id="ApplicationFiles" Directory="INSTALLFOLDER"><Files Include="$(var.PublishDir)\**"><Exclude Files="$(var.PublishDir)\service\RED_ROUTE.Service.exe"/><Exclude Files="$(var.PublishDir)\**\*.pdb"/></Files></ComponentGroup>
   <Feature Id="MainFeature" Title="RED_ROUTE" Level="1"><ComponentGroupRef Id="ApplicationFiles"/><ComponentRef Id="VpnService"/><ComponentRef Id="OwnerRegistration"/><ComponentRef Id="StartMenu"/></Feature>
  </Package>
 </Wix>
