@@ -352,8 +352,9 @@ public partial class MainWindow : Window
         {
             if (manual) Notice("Обновляем базу сервисов…");
             await catalog.RefreshAsync(settings.Sites, lifetime.Token);
-            settings.Sites = SettingsCommands.RefreshServices(settings, catalog.GetById).Sites;
-            settings.DatabaseUpdated = catalog.Updated; SecureStore.Save(settings); UpdateLists();
+            var refreshed = SettingsCommands.RefreshServices(settings, catalog.GetById);
+            refreshed.DatabaseUpdated = catalog.Updated; SecureStore.Save(refreshed);
+            settings.Sites = refreshed.Sites; settings.DatabaseUpdated = refreshed.DatabaseUpdated; UpdateLists();
             if (settings.Mode != RouteMode.Off) await ApplyAsync(preserveMode: true);
             if (manual) Notice("База обновлена. Собственные правила сохранены.");
         }
@@ -364,13 +365,13 @@ public partial class MainWindow : Window
     private async void AddIp_Click(object sender, RoutedEventArgs e)
     {
         var input = Prompt("IP-адрес или подсеть", ""); if (input == null) return;
-        try { var cidr = Domains.NormalizeCidr(input); if (!settings.Sites.Any(s => s.IpRanges.Contains(cidr))) { settings.Sites.Add(new(cidr, [], [cidr])); await ApplyAsync(); } }
+        try { var cidr = Domains.NormalizeCidr(input); if (!settings.Sites.Any(s => s.IpRanges.Contains(cidr)) && TryAddRule(new(cidr, [], [cidr]))) await ApplyAsync(); }
         catch (FormatException ex) { Notice(ex.Message); }
     }
     private async void ExportRules_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new SaveFileDialog { Filter = "Правила RED_ROUTE (*.json)|*.json", FileName = "RED_ROUTE-rules.json" }; if (dialog.ShowDialog(this) != true) return;
-        try { await File.WriteAllTextAsync(dialog.FileName, JsonSerializer.Serialize(settings.Sites, new JsonSerializerOptions(Protocol.Json) { WriteIndented = true })); Notice("Правила сохранены. Профили и ключи в файл не включены."); } catch (IOException) { Notice("Не удалось сохранить правила."); }
+        try { await File.WriteAllTextAsync(dialog.FileName, JsonSerializer.Serialize(settings.Sites, new JsonSerializerOptions(Protocol.Json) { WriteIndented = true })); Notice("Правила сохранены. Профили и ключи в файл не включены."); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Notice("Не удалось сохранить правила."); }
     }
     private async void ImportRules_Click(object sender, RoutedEventArgs e)
     {
@@ -383,7 +384,7 @@ public partial class MainWindow : Window
             if (MessageBox.Show(this, $"Заменить текущий список на {sites.Count} правил из файла?", "RED_ROUTE", MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
             settings.Sites = sites; await ApplyAsync();
         }
-        catch (Exception ex) when (ex is IOException or JsonException or FormatException or NullReferenceException) { Notice("Не удалось прочитать правила. Текущий список сохранён."); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or FormatException or NullReferenceException) { Notice("Не удалось прочитать правила. Текущий список сохранён."); }
     }
     private void Startup_Click(object sender, RoutedEventArgs e)
     {
@@ -513,6 +514,11 @@ public partial class MainWindow : Window
             var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(image));
             using var stream = File.Create(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", name + ".png")); png.Save(stream);
         }
+        var previousSites = settings.Sites;
+        settings.Sites = Enumerable.Range(0, 500).Select(i => new SiteRule("Rule " + i, ["rule" + i + ".example"], [])).ToList();
+        if (TryAddRule(new("Extra IP", [], ["192.0.2.1/32"])) || settings.Sites.Count != 500)
+            throw new InvalidOperationException("A rule beyond the configured limit must be rejected without mutating the list");
+        settings.Sites = previousSites; UpdateLists(); Feedback.Visibility = Visibility.Collapsed;
         Close();
         if (IsVisible || exiting) throw new InvalidOperationException("Closing the main window must hide it without exiting or stopping VPN");
         OpenWindow(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);

@@ -32,6 +32,8 @@ jobs:
         working-directory: vendor/amnezia-box
         run: |
           $env:GOTOOLCHAIN = 'local'
+          $env:GOPATH = (Resolve-Path '../../.tools/gopath').Path
+          $env:GOCACHE = (Resolve-Path '../../.tools/gocache').Path
           go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -tags 'with_gvisor,with_quic,with_wireguard,with_awg' ./cmd/sing-box
           if ($LASTEXITCODE -ne 0) { throw 'Go vulnerability audit failed' }
       - name: Native WPF smoke test
@@ -55,9 +57,14 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          $version = ([xml](Get-Content Directory.Build.props -Raw)).Project.PropertyGroup.Version
+          $properties = ([xml](Get-Content Directory.Build.props -Raw)).Project.PropertyGroup
+          $version = $properties.Version
           if ($env:RELEASE_TAG -ne "v$version") { throw 'Release tag must match the application version' }
           gh release view $env:RELEASE_TAG *> $null
           if ($LASTEXITCODE -eq 0) { Write-Output 'Release already exists; keeping its published assets'; exit 0 }
-          gh release create $env:RELEASE_TAG "artifacts/RED_ROUTE-$version-Setup.exe" "artifacts/RED_ROUTE-$version-Setup.exe.sha256" "artifacts/RED_ROUTE-$version-win-x64.msi" "artifacts/RED_ROUTE-$version-engine-source.zip" --verify-tag --title "RED_ROUTE $version" --generate-notes
+          $releaseArgs = @($env:RELEASE_TAG, "artifacts/RED_ROUTE-$version-Setup.exe", "artifacts/RED_ROUTE-$version-Setup.exe.sha256", "artifacts/RED_ROUTE-$version-win-x64.msi", "artifacts/RED_ROUTE-$version-engine-source.zip", '--verify-tag', '--title', "RED_ROUTE $version")
+          if ($properties.ReleaseCandidate -eq 'true') { $releaseArgs += @('--prerelease', '--latest=false') }
+          $notes = "docs/RELEASE-NOTES-$version.md"
+          if (Test-Path -LiteralPath $notes) { $releaseArgs += @('--notes-file', $notes) } else { $releaseArgs += '--generate-notes' }
+          gh release create @releaseArgs
           if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }

@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <Version>0.1.13</Version>
+    <ReleaseCandidate>true</ReleaseCandidate>
     <Authors>RED_ROUTE</Authors>
     <Product>RED_ROUTE</Product>
     <Deterministic>true</Deterministic>
