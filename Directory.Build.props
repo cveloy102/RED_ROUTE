@@ -4,7 +4,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
-    <Version>0.1.15</Version>
+    <Version>0.1.17</Version>
     <ReleaseCandidate>true</ReleaseCandidate>
     <Authors>RED_ROUTE</Authors>
     <Product>RED_ROUTE</Product>

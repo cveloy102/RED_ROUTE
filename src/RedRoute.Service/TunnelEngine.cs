@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text;
 using RedRoute.Core;
 using RedRoute.Platform;
 
@@ -15,12 +16,16 @@ public sealed class TunnelEngine : ITunnelEngine
     private int healthPort;
     private string password = "";
     private string? networkFingerprint;
+    private string? probedNetworkProfile;
+    private bool configuredIpv6, effectiveIpv6, measuredIpv6, ipv6Changed;
+    private DateTimeOffset lastIpv6Probe;
+    private ProbeResult[] ipv6Checks = [];
     private IntPtr job;
     private readonly string runtimeFile = Path.Combine(SecureStore.ServiceDirectory, "runtime.json");
     private readonly string executable = Path.Combine(AppContext.BaseDirectory, "engine", "amnezia-box.exe");
     public IReadOnlyList<ProbeResult> LastChecks { get; private set; } = [];
     public bool IsRunning => process != null && !process.HasExited;
-    public bool NetworkChanged => networkFingerprint != null && networkFingerprint != DirectNetwork.Fingerprint();
+    public bool NetworkChanged => ipv6Changed || networkFingerprint != null && networkFingerprint != DirectNetwork.Fingerprint();
     public async Task StartAsync(VpnProfile profile, ClientSettings settings, bool captureTraffic, CancellationToken token)
     {
         if (!File.Exists(executable)) throw new FileNotFoundException("Ядро VPN не установлено.");
@@ -37,21 +42,46 @@ public sealed class TunnelEngine : ITunnelEngine
         var directDns = DirectNetwork.Dns();
         var directIpv6 = DirectNetwork.HasPublicIpv6Route();
         networkFingerprint = DirectNetwork.Fingerprint();
-        var json = CoreConfiguration.Build(parsed, settings, captureTraffic, healthPort, password, directDns?.Server, directDns?.Interface, Path.Combine(SecureStore.ServiceDirectory, "dns-cache.db"), directIpv6).ToJsonString();
+        configuredIpv6 = Ipv6Routing.ProfileSupportsIpv6(parsed);
+        var profileBytes = Encoding.UTF8.GetBytes(profile.Config);
+        string probeKey;
+        try { probeKey = Convert.ToHexString(SHA256.HashData(profileBytes)) + ":" + networkFingerprint; }
+        finally { CryptographicOperations.ZeroMemory(profileBytes); }
+        // A profile's IPv6 address does not prove that its server can reach IPv6 Internet.
+        // Only reuse a measured result from the immediately preceding route-free candidate.
+        effectiveIpv6 = configuredIpv6 && (!captureTraffic || probedNetworkProfile == probeKey && measuredIpv6);
+        ipv6Changed = false;
+        var json = CoreConfiguration.Build(parsed, settings, captureTraffic, healthPort, password, directDns?.Server, directDns?.Interface, Path.Combine(SecureStore.ServiceDirectory, "dns-cache.db"), directIpv6, effectiveIpv6).ToJsonString();
         await File.WriteAllTextAsync(runtimeFile, json, token);
         var info = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(executable)!, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true };
         info.ArgumentList.Add("run"); info.ArgumentList.Add("-c"); info.ArgumentList.Add(runtimeFile);
         process = Process.Start(info) ?? throw new IOException("Не удалось запустить ядро.");
+        var readiness = new EngineReadiness();
         // Raw engine logs can contain destinations; drain without retaining them in the diagnostic report.
-        process.OutputDataReceived += (_, _) => { }; process.ErrorDataReceived += (_, _) => { };
+        process.OutputDataReceived += (_, e) => readiness.Observe(e.Data); process.ErrorDataReceived += (_, _) => { };
         process.BeginOutputReadLine(); process.BeginErrorReadLine();
         job = Native.CreateKillJob(process.Handle);
-        for (var i = 0; i < 50; i++)
+        for (var i = 0; i < 150; i++)
         {
             token.ThrowIfCancellationRequested();
             if (process.HasExited) throw new IOException("Ядро VPN завершилось при запуске.");
+            // The health listener can open before the TUN routes/DNS have been installed.
+            if (!readiness.IsReady) { await Task.Delay(100, token); continue; }
             using var tcp = new TcpClient();
-            try { await tcp.ConnectAsync(IPAddress.Loopback, healthPort, token); return; } catch (SocketException) { }
+            var ready = false;
+            try { await tcp.ConnectAsync(IPAddress.Loopback, healthPort, token); ready = true; } catch (SocketException) { }
+            if (ready)
+            {
+                if (!captureTraffic)
+                {
+                    ipv6Checks = configuredIpv6 ? await ProbeAsync(true, token) : [];
+                    measuredIpv6 = ipv6Checks.Any(c => c.Success);
+                    effectiveIpv6 = measuredIpv6;
+                    probedNetworkProfile = probeKey;
+                    lastIpv6Probe = DateTimeOffset.UtcNow;
+                }
+                return;
+            }
             await Task.Delay(100, token);
         }
         throw new TimeoutException("Ядро не ответило при запуске.");
@@ -59,21 +89,35 @@ public sealed class TunnelEngine : ITunnelEngine
     public async Task<bool> CheckAsync(CancellationToken token)
     {
         if (process is null || process.HasExited) { LastChecks = [new("VPN engine", false, 0, "ProcessNotRunning")]; return false; }
+        var checks = await ProbeAsync(false, token);
+        // Recheck a working IPv6 path each cycle; retry an unavailable one less often.
+        if (configuredIpv6 && DateTimeOffset.UtcNow - lastIpv6Probe >= TimeSpan.FromSeconds(effectiveIpv6 ? 10 : 60))
+        {
+            ipv6Checks = await ProbeAsync(true, token);
+            measuredIpv6 = ipv6Checks.Any(c => c.Success);
+            lastIpv6Probe = DateTimeOffset.UtcNow;
+            ipv6Changed = measuredIpv6 != effectiveIpv6;
+        }
+        LastChecks = [.. checks, .. ipv6Checks];
+        return checks.Any(c => c.Success);
+    }
+    private async Task<ProbeResult[]> ProbeAsync(bool ipv6, CancellationToken token)
+    {
         using var handler = new HttpClientHandler
         {
-            Proxy = new WebProxy($"socks5://127.0.0.1:{healthPort}") { Credentials = new NetworkCredential("redroute", password) },
+            Proxy = new WebProxy($"socks5://127.0.0.1:{healthPort}") { Credentials = new NetworkCredential(ipv6 ? "redroute-ipv6" : "redroute", password) },
             UseProxy = true, AllowAutoRedirect = false
         };
-        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(ipv6 ? 3 : 5) };
         var results = await Task.WhenAll(new[] { "https://cp.cloudflare.com/generate_204", "https://www.gstatic.com/generate_204" }.Select(async url =>
         {
             var timer = Stopwatch.StartNew();
-            try { using var request = new HttpRequestMessage(HttpMethod.Get, url); using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token); return new ProbeResult(new Uri(url).Host, response.StatusCode == HttpStatusCode.NoContent, timer.ElapsedMilliseconds, "HTTP " + (int)response.StatusCode); }
-            catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or IOException) { return new ProbeResult(new Uri(url).Host, false, timer.ElapsedMilliseconds, ex is HttpRequestException http ? http.HttpRequestError.ToString() : ex is OperationCanceledException ? "Timeout" : "IOError"); }
+            var target = (ipv6 ? "IPv6: " : "") + new Uri(url).Host;
+            try { using var request = new HttpRequestMessage(HttpMethod.Get, url); using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token); return new ProbeResult(target, response.StatusCode == HttpStatusCode.NoContent, timer.ElapsedMilliseconds, "HTTP " + (int)response.StatusCode); }
+            catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or IOException) { return new ProbeResult(target, false, timer.ElapsedMilliseconds, ex is HttpRequestException http ? http.HttpRequestError.ToString() : ex is OperationCanceledException ? "Timeout" : "IOError"); }
         }));
         token.ThrowIfCancellationRequested();
-        LastChecks = results;
-        return results.Any(x => x.Success);
+        return results;
     }
     public async Task StopAsync(CancellationToken token)
     {
@@ -97,7 +141,7 @@ public sealed class TunnelEngine : ITunnelEngine
         {
             // Always release the kill-on-close job, including failed/time-limited shutdowns.
             if (job != IntPtr.Zero) { Native.CloseHandle(job); job = IntPtr.Zero; }
-            process?.Dispose(); process = null; password = ""; networkFingerprint = null;
+            process?.Dispose(); process = null; password = ""; networkFingerprint = null; ipv6Changed = false;
             try { if (File.Exists(runtimeFile)) File.Delete(runtimeFile); }
             finally { Native.DnsFlushResolverCache(); }
         }

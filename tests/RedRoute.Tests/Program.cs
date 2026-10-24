@@ -43,6 +43,8 @@ Reject(() => Domains.Normalize("127.0.0.1"), "IP must be an explicit IP rule");
 Reject(() => Domains.NormalizeCidr("1.2.3.4/33"), "Reject invalid prefix");
 Assert(Domains.NormalizeCidr("2001:db8::1") == "2001:db8::1/128", "IPv6 CIDR");
 var parsed = ConfParser.Parse(config);
+var printableProfile = new VpnProfile(Guid.NewGuid(), "Synthetic profile", config).ToString();
+Assert(printableProfile.Contains("Synthetic profile") && !printableProfile.Contains(key) && !printableProfile.Contains("PrivateKey") && !printableProfile.Contains("Endpoint"), "Profile string/automation representation excludes the configuration and all key material");
 Assert(parsed.IsAmnezia && parsed.Endpoint.Port == 51820, "Parse AWG profile");
 Reject(() => ConfParser.Parse(config.Replace("Jc = 4", "PostUp = powershell bad")), "Never execute conf hooks");
 Reject(() => ConfParser.Parse(config + "[Peer]\nPublicKey=x"), "Reject multiple peers explicitly");
@@ -91,6 +93,7 @@ InputMatrixChecks.Run(config, Assert);
 StorageChecks.Run(config, Assert);
 Ipv6RoutingChecks.Run(config, Assert);
 await Ipv6RoutingChecks.CheckNetworkChangeAsync(config, Assert);
+await ReadinessChecks.RunAsync(Assert);
 await FailoverMatrixChecks.RunAsync(config, Assert);
 if (args.Contains("--native-lab")) await NativeCoreLab.RunAsync(Assert);
 foreach (var (name, awg, mode, capture) in new[] { ("awg-auto", true, RouteMode.Auto, true), ("awg-probe", true, RouteMode.Auto, false), ("awg-on", true, RouteMode.On, true), ("wg-auto", false, RouteMode.Auto, true) })

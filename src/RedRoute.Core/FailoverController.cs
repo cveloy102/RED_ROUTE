@@ -57,7 +57,14 @@ public sealed class FailoverController
             await ConnectAsync(0, token);
             return;
         }
-        if (await engine.CheckAsync(token))
+        var healthy = await engine.CheckAsync(token);
+        if (engine.NetworkChanged)
+        {
+            await InterruptedAsync("network_changed");
+            await ConnectAsync(0, token);
+            return;
+        }
+        if (healthy)
         {
             var hadFailure = failures > 0; failures = 0; lastSuccess = DateTimeOffset.UtcNow;
             message = $"VPN работает · {settings.Profiles[current].Name}";

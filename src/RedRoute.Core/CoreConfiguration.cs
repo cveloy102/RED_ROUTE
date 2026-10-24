@@ -4,9 +4,10 @@ namespace RedRoute.Core;
 
 public static class CoreConfiguration
 {
-    public static JsonObject Build(ParsedProfile profile, ClientSettings settings, bool captureTraffic, int healthPort, string password, string? directDnsServer = null, string? directInterface = null, string? dnsCachePath = null, bool directIpv6Available = false)
+    public static JsonObject Build(ParsedProfile profile, ClientSettings settings, bool captureTraffic, int healthPort, string password, string? directDnsServer = null, string? directInterface = null, string? dnsCachePath = null, bool directIpv6Available = false, bool? vpnIpv6Available = null)
     {
-        var vpnIpv6 = Ipv6Routing.ProfileSupportsIpv6(profile);
+        var configuredIpv6 = Ipv6Routing.ProfileSupportsIpv6(profile);
+        var vpnIpv6 = configuredIpv6 && vpnIpv6Available != false;
         var vpnStrategy = vpnIpv6 ? "prefer_ipv4" : "ipv4_only";
         var (host, port) = profile.Endpoint;
         JsonObject peer = new()
@@ -47,6 +48,7 @@ public static class CoreConfiguration
             ["type"] = "mixed", ["tag"] = "health", ["listen"] = "127.0.0.1", ["listen_port"] = healthPort,
             ["users"] = new JsonArray(new JsonObject { ["username"] = "redroute", ["password"] = password })
         }];
+        if (configuredIpv6) inbounds[0]!["users"]!.AsArray().Add(new JsonObject { ["username"] = "redroute-ipv6", ["password"] = password });
         if (captureTraffic) inbounds.Add(new JsonObject
         {
             ["type"] = "tun", ["tag"] = "tun", ["interface_name"] = "RED_ROUTE",
@@ -54,8 +56,13 @@ public static class CoreConfiguration
             ["mtu"] = 1280, ["auto_route"] = true, ["strict_route"] = false, ["stack"] = "mixed"
         });
         // AWG's userspace netstack has no resolver of its own. Resolve domains in the routing core before dialing it.
-        JsonArray rules = [new JsonObject { ["inbound"] = Strings(["health"]), ["action"] = "resolve", ["server"] = "remote", ["strategy"] = vpnStrategy },
-            new JsonObject { ["inbound"] = Strings(["health"]), ["outbound"] = "vpn" }];
+        JsonArray rules = [new JsonObject { ["inbound"] = Strings(["health"]), ["auth_user"] = Strings(["redroute"]), ["action"] = "resolve", ["server"] = "remote", ["strategy"] = vpnStrategy },
+            new JsonObject { ["inbound"] = Strings(["health"]), ["auth_user"] = Strings(["redroute"]), ["outbound"] = "vpn" }];
+        if (configuredIpv6)
+        {
+            rules.Add(new JsonObject { ["inbound"] = Strings(["health"]), ["auth_user"] = Strings(["redroute-ipv6"]), ["action"] = "resolve", ["server"] = "remote", ["strategy"] = "ipv6_only" });
+            rules.Add(new JsonObject { ["inbound"] = Strings(["health"]), ["auth_user"] = Strings(["redroute-ipv6"]), ["outbound"] = "vpn" });
+        }
         // Reject an unusable public IPv6 path before sniff accepts TCP. Browsers can then try IPv4.
         // Keep the IPv6 TUN even for IPv4 profiles so full VPN cannot leak through a physical IPv6 route.
         // FakeIP is unmapped before rule matching and LAN/private IPv6 must remain available.

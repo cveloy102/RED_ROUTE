@@ -5,7 +5,11 @@ namespace RedRoute.Core;
 
 public enum RouteMode { Off, On, Auto }
 public enum ConnectionPhase { Off, Connecting, Connected, Direct, Error }
-public sealed record VpnProfile(Guid Id, string Name, string Config);
+public sealed record VpnProfile(Guid Id, string Name, string Config)
+{
+    // WPF automation peers and debugger/log formatting must never stringify private .conf data.
+    public override string ToString() => $"VpnProfile {{ Id = {Id}, Name = {Name} }}";
+}
 public sealed record SiteRule(string Name, string[] Domains, string[] IpRanges, string? ServiceId = null);
 public sealed class ClientSettings
 {

@@ -15,7 +15,10 @@ opt-in `override_destination` field to the resolve action, allowing a sniffed
 domain with a cached real IPv6 destination to resolve to IPv4 on an IPv4-only
 outbound. Ordinary IPv6 and IP-only connections retain their original destination.
 Helper, regression tests and generated-rule pre-match checks are distributed in
-the corresponding engine source archive. The packaged engine revision is redroute6.
+the corresponding engine source archive. The packaged engine revision is redroute7.
+The CLI companion also emits the fixed RED_ROUTE_READY protocol line only after
+all Box.Start stages complete. The service uses this signal instead of treating
+an already listening health port as proof that OS capture routes are ready.
 The build includes `with_gvisor,with_quic,with_wireguard,with_awg`. Dependency
 versions are recorded in the bundled `service/engine/build-info.txt` and the
 upstream `go.mod`/`go.sum` at the pinned commit. Wintun driver resources and their

@@ -44,13 +44,19 @@ internal static class LiveAcceptance
             if (!(await PipeProtocol.CallAsync(new("configure", value))).Success) throw new IOException("Configure refused");
             return await Wait(s => s.Mode == value.Mode && s.Phase == phase && s.Events.LastOrDefault()?.Time > before);
         }
-        async Task<string> Fetch(string url, IPAddress? pinned = null)
+        async Task<string> Fetch(string url, IPAddress? pinned = null, bool requireTunnelSource = false)
         {
             using var handler = new SocketsHttpHandler { UseProxy = false, PooledConnectionLifetime = TimeSpan.Zero };
-            if (pinned != null) handler.ConnectCallback = async (context, token) =>
+            if (pinned != null || requireTunnelSource) handler.ConnectCallback = async (context, token) =>
             {
-                var socket = new Socket(pinned.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-                try { await socket.ConnectAsync(new IPEndPoint(pinned, context.DnsEndPoint.Port), token); return new NetworkStream(socket, ownsSocket: true); }
+                var address = pinned ?? (await Dns.GetHostAddressesAsync(context.DnsEndPoint.Host, token)).First(a => a.AddressFamily == AddressFamily.InterNetwork);
+                var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                try
+                {
+                    await socket.ConnectAsync(new IPEndPoint(address, context.DnsEndPoint.Port), token);
+                    if (requireTunnelSource && ((IPEndPoint)socket.LocalEndPoint!).Address.ToString() != "172.30.255.1") throw new IOException("Connected state did not install the capture route");
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
                 catch { socket.Dispose(); throw; }
             };
             using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
@@ -98,7 +104,8 @@ internal static class LiveAcceptance
             var directTrace = (await Fetch("https://www.cloudflare.com/cdn-cgi/trace")).Split('\n').First(s => s.StartsWith("ip="));
             Pass(NoTunnel(), "Off: no active RED_ROUTE tunnel");
             await Configure(Config(RouteMode.On, good));
-            var vpn = await Fetch("https://api.ipify.org");
+            var vpn = await Fetch("https://api.ipify.org", requireTunnelSource: true);
+            Pass(true, "Connected state: first real IPv4 TCP connection uses the TUN source, not just the health port");
             Pass(!NoTunnel() && vpn == await VpnEgress(), "On: system egress equals independently authenticated VPN health-proxy egress");
             Console.WriteLine("Direct baseline differs from VPN egress: " + (baseline != vpn) + ". Equal addresses can indicate upstream router VPN routing.");
             if (dnsOnly)

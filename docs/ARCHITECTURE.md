@@ -18,6 +18,10 @@ JSON and encrypted settings live under a hardened ProgramData directory.
 is the normal start sequence. A probe always uses an authenticated loopback SOCKS
 inbound with a highest-priority route to the VPN outbound, including in Auto mode.
 Health cannot succeed by accidentally checking an unlisted domain directly.
+Both candidate and capture starts wait for RED_ROUTE_READY, a fixed stdout signal
+emitted after all Box.Start stages finish. Listening on the health port alone is
+insufficient: that inbound can open while TUN routes and DNS are still being set up.
+The readiness wait is bounded/cancellable and never retains raw log contents.
 Candidate failure never leaves capture running. Three failed live probe cycles
 stop capture before trying candidates. Status snapshots are immutable and include
 bounded events, not raw engine logs. New configure/recover cancels the previous
@@ -42,6 +46,15 @@ from profile IPv6 support. Link-local and ULA addresses on a physical adapter do
 establish public IPv6 connectivity. The route check uses local UDP source selection
 without transmitting a packet; it does not prove remote IPv6 reachability.
 
+Profile IPv6 addresses/routes are only a prerequisite. Before capture, a separate
+authenticated health identity resolves AAAA only and probes HTTPS through the VPN.
+An unreachable advertised IPv6 path produces an IPv4 routing policy while retaining
+the profile unchanged. The measurement is keyed to profile contents and the physical
+network fingerprint and is carried only from the candidate into capture. Working
+IPv6 is checked every monitor cycle; unavailable IPv6 is retried after a minute.
+A changed capability releases capture and rebuilds routing in the same monitor cycle,
+even when IPv4 health remains good. IPv6 results remain visible in diagnostics.
+
 The IPv6 TUN stays present even with an IPv4-only profile, preventing a full-VPN
 bypass through physical IPv6. Public IPv6 with no usable outbound is explicitly
 rejected before sniff, with no_drop enabled so repeated attempts still fail quickly.
@@ -55,6 +68,11 @@ Physical interface/address/gateway/DNS changes cause the next service tick to re
 capture and rebuild the connection with fresh capabilities. The RED_ROUTE adapter
 is excluded from that comparison. Real browser, OS route and network-change acceptance
 remain separate from the userspace and route-matcher tests.
+
+Profile string representations expose identity/name only. WPF profile rows stringify
+to the displayed title so accessibility peers cannot obtain the private configuration
+through a record's generated ToString. The UI smoke test walks real WPF automation
+peers and asserts that a synthetic private-key marker is absent.
 
 Catalog refresh pins one Geo-Aggregator commit, bounds download sizes, rejects
 unsafe source paths, and atomically replaces the cache only after all requested

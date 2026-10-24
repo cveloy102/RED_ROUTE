@@ -36,6 +36,12 @@ if (!$runText.Contains('redRouteControl(osSignals)')) {
     [IO.File]::WriteAllText($runFile, $runText, [Text.UTF8Encoding]::new($false))
 }
 Copy-Item -LiteralPath "$PSScriptRoot/engine/redroute_control.go" -Destination "$source/cmd/sing-box/redroute_control.go" -Force
+$runText = [IO.File]::ReadAllText($runFile).Replace("`r`n", "`n")
+if (!$runText.Contains("`tredRouteReady()`n`treturn instance, cancel, nil")) {
+    $readyReturn = "`treturn instance, cancel, nil"
+    if (!$runText.Contains($readyReturn)) { throw 'Pinned engine readiness patch no longer matches source' }
+    [IO.File]::WriteAllText($runFile, $runText.Replace($readyReturn, "`tredRouteReady()`n$readyReturn"), [Text.UTF8Encoding]::new($false))
+}
 # Persist the allocation cursor before the mapping, then commit the mapping before
 # returning a DNS answer. A crash must never forget or reassign an address already cached by a browser.
 $fakeIpFile = Join-Path $source 'dns/transport/fakeip/store.go'
@@ -108,7 +114,7 @@ Copy-Item -LiteralPath "$PSScriptRoot/engine/fakeip_cache_test.go" -Destination 
 if ($LASTEXITCODE -ne 0) { throw 'DNS crash durability checks failed' }
 & $Go test -C $source github.com/amnezia-vpn/amneziawg-go/v3/device -run '^(TestTwoDevicePing|TestAWGDevicePing|TestNoiseHandshake|TestConcurrencySafety|TestUpDown)$' -count=1 -timeout=90s
 if ($LASTEXITCODE -ne 0) { throw 'AWG packet and concurrency checks failed' }
-& $Go build -C $source -tags 'with_gvisor,with_quic,with_wireguard,with_awg' -trimpath -ldflags '-s -w -X github.com/sagernet/sing-box/constant.Version=1.260910.0-redroute6' -o "$destination/amnezia-box.exe" ./cmd/sing-box
+& $Go build -C $source -tags 'with_gvisor,with_quic,with_wireguard,with_awg' -trimpath -ldflags '-s -w -X github.com/sagernet/sing-box/constant.Version=1.260910.0-redroute7' -o "$destination/amnezia-box.exe" ./cmd/sing-box
 if ($LASTEXITCODE -ne 0) { throw 'VPN core build failed' }
 New-Item -ItemType Directory -Force "$root/artifacts/checks" | Out-Null
 & $Go build -C $source -trimpath -o "$root/artifacts/checks/redroute-lab-server.exe" "$root/tools/native-lab-server/main.go"

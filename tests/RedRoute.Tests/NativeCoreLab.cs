@@ -46,6 +46,7 @@ internal static class NativeCoreLab
                 LocalDns(config);
                 assert(config["inbounds"]!.AsArray().All(n => n!["type"]!.GetValue<string>() != "tun"), protocol + "/" + mode + ": integration lab never creates a system tunnel");
                 await using var clientProcess = await CoreProcess.StartAsync(engine, folder, protocol + "-" + mode + (ipv6 ? "-dual" : "-v4"), config, healthPort);
+                assert(clientProcess.FullyReady, scenario + ": actual engine emits readiness after full startup, independently of health port availability");
                 using var proxy = new HttpClientHandler { Proxy = new WebProxy($"socks5://127.0.0.1:{trafficPort}") { Credentials = new NetworkCredential("redroute", "lab-password"), BypassProxyOnLocal = false }, UseProxy = true, AllowAutoRedirect = false };
                 using var http = new HttpClient(proxy) { Timeout = TimeSpan.FromSeconds(8) };
                 var response = await http.GetStringAsync($"http://selected.test:{tunnelHttpPort}/probe");
@@ -54,6 +55,17 @@ internal static class NativeCoreLab
                 {
                     response = await http.GetStringAsync($"http://selected-v6.test:{tunnelHttpPort}/probe");
                     assert(response == "VPN-LAB", scenario + ": IPv6 traffic traverses the encrypted userspace tunnel");
+                    using var v6Handler = new HttpClientHandler { Proxy = new WebProxy($"socks5://127.0.0.1:{healthPort}") { Credentials = new NetworkCredential("redroute-ipv6", "lab-password") }, UseProxy = true };
+                    using var v6Health = new HttpClient(v6Handler) { Timeout = TimeSpan.FromSeconds(3) };
+                    assert(await v6Health.GetStringAsync($"http://health-v6.test:{tunnelHttpPort}/probe") == "VPN-LAB", scenario + ": independent IPv6 health authentication traverses VPN even for an unlisted domain");
+                    if (mode == RouteMode.On)
+                    {
+                        assert(await http.GetStringAsync($"http://selected.test:{tunnelHttpPort}/disable-ipv6") == "V6-DISABLED", scenario + ": test peer fails IPv6 HTTP while profile still advertises IPv6");
+                        try { await v6Health.GetStringAsync($"http://health-v6.test:{tunnelHttpPort}/probe"); throw new Exception("Broken IPv6 was reported healthy"); }
+                        catch (HttpRequestException) { assert(true, scenario + ": IPv6 check fails independently of profile addresses"); }
+                        assert(await http.GetStringAsync($"http://selected.test:{tunnelHttpPort}/probe") == "VPN-LAB", scenario + ": IPv4 remains healthy during an IPv6-only outage");
+                        assert(await http.GetStringAsync($"http://selected.test:{tunnelHttpPort}/enable-ipv6") == "V6-ENABLED" && await v6Health.GetStringAsync($"http://health-v6.test:{tunnelHttpPort}/probe") == "VPN-LAB", scenario + ": IPv6 health detects recovery without replacing the profile");
+                    }
                 }
                 using (var cached = new HttpRequestMessage(HttpMethod.Get, $"http://[2001:db8::2]:{tunnelHttpPort}/probe"))
                 {
@@ -93,7 +105,7 @@ internal static class NativeCoreLab
             var servers = config["dns"]!["servers"]!.AsArray();
             for (var i = 0; i < servers.Count; i++)
                 if (servers[i]!["tag"]!.GetValue<string>() == tag)
-                    servers[i] = new JsonObject { ["type"] = "hosts", ["tag"] = tag, ["predefined"] = new JsonObject { ["selected.test"] = "192.0.2.2", ["selected-v6.test"] = "2001:db8::2", ["direct.test"] = "127.0.0.1" } };
+                    servers[i] = new JsonObject { ["type"] = "hosts", ["tag"] = tag, ["predefined"] = new JsonObject { ["selected.test"] = "192.0.2.2", ["selected-v6.test"] = "2001:db8::2", ["health-v6.test"] = "2001:db8::2", ["direct.test"] = "127.0.0.1" } };
         }
     }
     private static int Port(bool udp = false)
@@ -111,8 +123,9 @@ internal static class NativeCoreLab
         var keys = (await output).Split('\n').Where(l => l.Contains(": ")).Select(l => l.Trim().Split(": ", 2)).ToDictionary(p => p[0], p => p[1]);
         _ = await errors; return (keys["PrivateKey"], keys["PublicKey"]);
     }
-    private sealed class CoreProcess(Process child, Task<string> output, Task<string> errors, string logFile) : IAsyncDisposable
+    private sealed class CoreProcess(Process child, Task<string> output, Task<string> errors, string logFile, EngineReadiness? readiness = null) : IAsyncDisposable
     {
+        public bool FullyReady => readiness?.IsReady == true;
         private Task<string> Errors => errors;
         public static async Task<CoreProcess> StartPeerAsync(string folder, string name, string ipc, int httpPort)
         {
@@ -134,12 +147,21 @@ internal static class NativeCoreLab
             config["log"]!["level"] = "debug"; await File.WriteAllTextAsync(file, config.ToJsonString());
             var info = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardError = true, RedirectStandardOutput = true };
             info.ArgumentList.Add("run"); info.ArgumentList.Add("-c"); info.ArgumentList.Add(file);
-            var process = Process.Start(info)!; var instance = new CoreProcess(process, process.StandardOutput.ReadToEndAsync(), process.StandardError.ReadToEndAsync(), Path.Combine(folder, name + ".log"));
+            var process = Process.Start(info)!;
+            var ready = new EngineReadiness();
+            async Task<string> DrainOutput()
+            {
+                var text = new StringBuilder();
+                while (await process.StandardOutput.ReadLineAsync() is { } line) { ready.Observe(line); text.AppendLine(line); }
+                return text.ToString();
+            }
+            var instance = new CoreProcess(process, DrainOutput(), process.StandardError.ReadToEndAsync(), Path.Combine(folder, name + ".log"), ready);
             try
             {
-                for (var i = 0; i < 100; i++)
+                for (var i = 0; i < 150; i++)
                 {
                     if (process.HasExited) throw new IOException("Native lab startup failed: " + (await instance.Errors)[..Math.Min(1200, (await instance.Errors).Length)]);
+                    if (!ready.IsReady) { await Task.Delay(100); continue; }
                     using var tcp = new TcpClient();
                     try { await tcp.ConnectAsync(IPAddress.Loopback, port); return instance; } catch (SocketException) { }
                     await Task.Delay(50);

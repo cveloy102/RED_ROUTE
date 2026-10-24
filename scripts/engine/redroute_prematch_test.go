@@ -57,6 +57,7 @@ func TestRedRouteGeneratedIPv6PreMatch(t *testing.T) {
 		Destination string            `json:"destination"`
 		Domain      string            `json:"domain"`
 		Inbound     string            `json:"inbound"`
+		User        string            `json:"user"`
 		Reject      bool              `json:"reject"`
 		Outbound    *string           `json:"outbound"`
 	}
@@ -96,7 +97,7 @@ func TestRedRouteGeneratedIPv6PreMatch(t *testing.T) {
 				router.rules = append(router.rules, rule)
 			}
 			for _, network := range []string{N.NetworkTCP, N.NetworkUDP} {
-				metadata := adapter.InboundContext{Inbound: tc.Inbound, Network: network, Destination: M.ParseSocksaddr(tc.Destination), Domain: tc.Domain}
+				metadata := adapter.InboundContext{Inbound: tc.Inbound, User: tc.User, Network: network, Destination: M.ParseSocksaddr(tc.Destination), Domain: tc.Domain}
 				if fakeAddress.IsValid() {
 					metadata.Destination = M.Socksaddr{Addr: fakeAddress, Port: 443}
 				}

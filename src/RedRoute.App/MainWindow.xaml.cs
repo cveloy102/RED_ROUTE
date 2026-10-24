@@ -38,7 +38,7 @@ public partial class MainWindow : Window
     private DateTimeOffset modeRequestDeadline;
     private DateTimeOffset catalogAttempt = DateTimeOffset.MinValue;
     private sealed record SiteRow(SiteRule Rule) { public string Name => Rule.Name; public string Description => Rule.ServiceId == null ? Rule.IpRanges.Length > 0 ? "IP-адреса и подсети" : "Сайт и его поддомены" : $"Сервис · доменов: {Rule.Domains.Length}, подсетей: {Rule.IpRanges.Length}"; }
-    private sealed record ProfileRow(VpnProfile Profile, int Position) { public string Title => $"{Position + 1}. {Profile.Name}"; public string Description => Position == 0 ? "Основной · подключаемся первым" : "Резерв · при недоступности предыдущего"; }
+    private sealed record ProfileRow(VpnProfile Profile, int Position) { public string Title => $"{Position + 1}. {Profile.Name}"; public string Description => Position == 0 ? "Основной · подключаемся первым" : "Резерв · при недоступности предыдущего"; public override string ToString() => Title; }
     private sealed record SuggestionRow(CatalogChoice Choice, bool Added) { public bool CanAdd => !Added; public string ActionText => Added ? "✓ Добавлено" : "+ Добавить"; }
     private bool choosingSuggestion;
     private void ShowSuggestions()
@@ -439,6 +439,20 @@ public partial class MainWindow : Window
     private void ExitWithCode(int code) { exiting = true; lifetime.Cancel(); timer.Stop(); updateTimer.Stop(); SearchPopup.IsOpen = false; tray.Visible = false; tray.Icon?.Dispose(); tray.Dispose(); Close(); System.Windows.Application.Current.Shutdown(code); }
     private async Task SmokeTestAsync()
     {
+        const string profileSecret = "redroute-private-key-automation-fixture";
+        settings.Profiles.Add(new(Guid.NewGuid(), "Synthetic accessible profile", "[Interface]\nPrivateKey = " + profileSecret));
+        UpdateLists(); ShowPage("profiles"); UpdateLayout(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+        var profilePeer = System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(ProfileItems)
+            ?? throw new InvalidOperationException("Profile accessibility peer missing");
+        static IEnumerable<System.Windows.Automation.Peers.AutomationPeer> WalkPeers(System.Windows.Automation.Peers.AutomationPeer peer)
+        {
+            yield return peer;
+            foreach (var child in peer.GetChildren() ?? []) foreach (var nested in WalkPeers(child)) yield return nested;
+        }
+        var profileNames = WalkPeers(profilePeer).Select(p => p.GetName() ?? "").ToArray();
+        if (!profileNames.Any(n => n.Contains("Synthetic accessible profile")) || profileNames.Any(n => n.Contains(profileSecret) || n.Contains("PrivateKey")))
+            throw new InvalidOperationException("Profile accessibility must expose its name without configuration or secrets");
+        settings.Profiles.Clear(); UpdateLists(); ShowPage("home");
         DomainInput.Text = "https://example.org/path"; await AddDomainAsync();
         if (settings.Sites.Count != 1 || settings.Sites[0].Domains[0] != "example.org") throw new InvalidOperationException("Domain UI failed");
         DomainInput.Text = "localhost"; await AddDomainAsync(); if (settings.Sites.Count != 1) throw new InvalidOperationException("Validation failed");

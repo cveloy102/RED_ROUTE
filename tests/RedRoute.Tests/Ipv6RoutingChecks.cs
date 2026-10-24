@@ -18,11 +18,12 @@ internal static class Ipv6RoutingChecks
         var cases = new List<object>();
         foreach (var mode in new[] { RouteMode.Auto, RouteMode.On })
         foreach (var direct in new[] { false, true })
-        foreach (var vpn in new[] { false, true })
+        foreach (var capability in new[] { (Configured: false, Available: false), (Configured: true, Available: true), (Configured: true, Available: false) })
         {
-            var name = $"{mode}/direct6={direct}/vpn6={vpn}";
+            var vpn = capability.Available;
+            var name = $"{mode}/direct6={direct}/configured6={capability.Configured}/vpn6={vpn}";
             var settings = new ClientSettings { Mode = mode, Sites = [new("Selected", ["selected.example"], ["2001:db8:42::/48"])] };
-            var json = CoreConfiguration.Build(vpn ? v6 : v4, settings, true, 12345, "synthetic", directIpv6Available: direct);
+            var json = CoreConfiguration.Build(capability.Configured ? v6 : v4, settings, true, 12345, "synthetic", directIpv6Available: direct, vpnIpv6Available: vpn);
             var rules = json["route"]!["rules"]!.AsArray();
             var rejects = rules.Where(r => r?["action"]?.ToString() == "reject").ToArray();
             var defaultReject = mode == RouteMode.On ? !vpn : !direct && !vpn;
@@ -33,10 +34,10 @@ internal static class Ipv6RoutingChecks
             var domainResolve = rules.First(r => r?["action"]?.ToString() == "resolve" && r?["inbound"] == null)!;
             assert(domainResolve["override_destination"]!.GetValue<bool>() == !vpn, name + ": selected cached AAAA can be re-resolved on IPv4-only VPN");
 
-            void Case(string destination, bool reject, string? outbound = null, string? domain = null, string inbound = "tun") => cases.Add(new
+            void Case(string destination, bool reject, string? outbound = null, string? domain = null, string inbound = "tun", string user = "redroute") => cases.Add(new
             {
                 name = name + "/" + destination + "/" + inbound,
-                rules = rules.DeepClone(), destination, domain = domain ?? "", inbound, reject, outbound
+                rules = rules.DeepClone(), destination, domain = domain ?? "", inbound, reject, outbound, user
             });
             Case("[2001:db8:10::1]:443", defaultReject);
             Case("[2001:db8:42::1]:443", !vpn,
@@ -48,7 +49,8 @@ internal static class Ipv6RoutingChecks
             Case("selected.example:443", false, domain: "selected.example");
             Case("fakeip4", false);
             Case("fakeip6", false);
-            Case("[2001:db8:10::1]:443", false, inbound: "health");
+            Case("[2001:db8:10::1]:443", false, outbound: "vpn", inbound: "health");
+            if (capability.Configured) Case("[2001:db8:10::1]:443", false, outbound: "vpn", inbound: "health", user: "redroute-ipv6");
             if (defaultReject)
             {
                 // Negative control: the same rejection placed after sniff cannot reject a SYN early.
@@ -78,22 +80,27 @@ internal static class Ipv6RoutingChecks
         await controller.TickAsync(default);
         assert(engine.CaptureStarts == before + 1 && controller.Status.Phase == ConnectionPhase.Connected
             && controller.Status.Events.Any(e => e.Code == "network_changed"), "Physical network change releases capture and rebuilds routing capabilities before reconnecting");
+        engine.ChangeDuringCheck = true;
+        await controller.TickAsync(default);
+        assert(engine.CaptureStarts == before + 2 && controller.Status.Phase == ConnectionPhase.Connected,
+            "IPv6 capability change discovered during a successful IPv4 check rebuilds routing in the same cycle");
         await controller.RecoverAsync(default);
         engine.NetworkChanged = true;
         await controller.TickAsync(default);
-        assert(engine.CaptureStarts == before + 1 && !engine.IsRunning, "Network change never reconnects a VPN which the user switched Off");
+        assert(engine.CaptureStarts == before + 2 && !engine.IsRunning, "Network change never reconnects a VPN which the user switched Off");
     }
 
     private sealed class NetworkEngine : ITunnelEngine
     {
         public bool IsRunning { get; private set; }
         public bool NetworkChanged { get; set; }
+        public bool ChangeDuringCheck { get; set; }
         public int CaptureStarts { get; private set; }
         public IReadOnlyList<ProbeResult> LastChecks => [];
         public Task StartAsync(VpnProfile p, ClientSettings s, bool capture, CancellationToken t)
         { IsRunning = true; NetworkChanged = false; if (capture) CaptureStarts++; return Task.CompletedTask; }
         public Task StopAsync(CancellationToken t) { IsRunning = false; return Task.CompletedTask; }
-        public Task<bool> CheckAsync(CancellationToken t) => Task.FromResult(true);
+        public Task<bool> CheckAsync(CancellationToken t) { if (ChangeDuringCheck) { NetworkChanged = true; ChangeDuringCheck = false; } return Task.FromResult(true); }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
