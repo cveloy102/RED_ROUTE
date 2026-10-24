@@ -9,6 +9,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
     dotnet run --project tests/RedRoute.Tests -c Release --no-build -- --native-lab
     if ($LASTEXITCODE -ne 0) { throw 'Checks failed' }
+    & "$PSScriptRoot/test-ipv6.ps1"
     $publish = Join-Path $root 'artifacts/publish'
     dotnet publish src/RedRoute.App -c Release -r win-x64 --self-contained true -o $publish -p:PublishSingleFile=false -p:RuntimeFrameworkVersion=$runtimeVersion --nologo
     if ($LASTEXITCODE -ne 0) { throw 'UI publish failed' }

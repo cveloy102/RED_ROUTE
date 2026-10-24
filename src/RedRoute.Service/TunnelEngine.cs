@@ -14,11 +14,13 @@ public sealed class TunnelEngine : ITunnelEngine
     private Process? process;
     private int healthPort;
     private string password = "";
+    private string? networkFingerprint;
     private IntPtr job;
     private readonly string runtimeFile = Path.Combine(SecureStore.ServiceDirectory, "runtime.json");
     private readonly string executable = Path.Combine(AppContext.BaseDirectory, "engine", "amnezia-box.exe");
     public IReadOnlyList<ProbeResult> LastChecks { get; private set; } = [];
     public bool IsRunning => process != null && !process.HasExited;
+    public bool NetworkChanged => networkFingerprint != null && networkFingerprint != DirectNetwork.Fingerprint();
     public async Task StartAsync(VpnProfile profile, ClientSettings settings, bool captureTraffic, CancellationToken token)
     {
         if (!File.Exists(executable)) throw new FileNotFoundException("Ядро VPN не установлено.");
@@ -33,7 +35,9 @@ public sealed class TunnelEngine : ITunnelEngine
         }
         parsed.Peer["Endpoint"] = endpointAddress.AddressFamily == AddressFamily.InterNetworkV6 ? $"[{endpointAddress}]:{port}" : $"{endpointAddress}:{port}";
         var directDns = DirectNetwork.Dns();
-        var json = CoreConfiguration.Build(parsed, settings, captureTraffic, healthPort, password, directDns?.Server, directDns?.Interface, Path.Combine(SecureStore.ServiceDirectory, "dns-cache.db")).ToJsonString();
+        var directIpv6 = DirectNetwork.HasPublicIpv6Route();
+        networkFingerprint = DirectNetwork.Fingerprint();
+        var json = CoreConfiguration.Build(parsed, settings, captureTraffic, healthPort, password, directDns?.Server, directDns?.Interface, Path.Combine(SecureStore.ServiceDirectory, "dns-cache.db"), directIpv6).ToJsonString();
         await File.WriteAllTextAsync(runtimeFile, json, token);
         var info = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(executable)!, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true };
         info.ArgumentList.Add("run"); info.ArgumentList.Add("-c"); info.ArgumentList.Add(runtimeFile);
@@ -93,7 +97,7 @@ public sealed class TunnelEngine : ITunnelEngine
         {
             // Always release the kill-on-close job, including failed/time-limited shutdowns.
             if (job != IntPtr.Zero) { Native.CloseHandle(job); job = IntPtr.Zero; }
-            process?.Dispose(); process = null; password = "";
+            process?.Dispose(); process = null; password = ""; networkFingerprint = null;
             try { if (File.Exists(runtimeFile)) File.Delete(runtimeFile); }
             finally { Native.DnsFlushResolverCache(); }
         }

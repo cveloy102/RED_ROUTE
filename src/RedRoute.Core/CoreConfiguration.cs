@@ -4,8 +4,10 @@ namespace RedRoute.Core;
 
 public static class CoreConfiguration
 {
-    public static JsonObject Build(ParsedProfile profile, ClientSettings settings, bool captureTraffic, int healthPort, string password, string? directDnsServer = null, string? directInterface = null, string? dnsCachePath = null)
+    public static JsonObject Build(ParsedProfile profile, ClientSettings settings, bool captureTraffic, int healthPort, string password, string? directDnsServer = null, string? directInterface = null, string? dnsCachePath = null, bool directIpv6Available = false)
     {
+        var vpnIpv6 = Ipv6Routing.ProfileSupportsIpv6(profile);
+        var vpnStrategy = vpnIpv6 ? "prefer_ipv4" : "ipv4_only";
         var (host, port) = profile.Endpoint;
         JsonObject peer = new()
         {
@@ -52,9 +54,20 @@ public static class CoreConfiguration
             ["mtu"] = 1280, ["auto_route"] = true, ["strict_route"] = false, ["stack"] = "mixed"
         });
         // AWG's userspace netstack has no resolver of its own. Resolve domains in the routing core before dialing it.
-        JsonArray rules = [new JsonObject { ["inbound"] = Strings(["health"]), ["action"] = "resolve", ["server"] = "remote", ["strategy"] = profile.Addresses.Any(a => a.Contains(':')) ? "prefer_ipv4" : "ipv4_only" },
-            new JsonObject { ["inbound"] = Strings(["health"]), ["outbound"] = "vpn" },
-            new JsonObject { ["action"] = "sniff" }, new JsonObject { ["protocol"] = "dns", ["action"] = "hijack-dns" }];
+        JsonArray rules = [new JsonObject { ["inbound"] = Strings(["health"]), ["action"] = "resolve", ["server"] = "remote", ["strategy"] = vpnStrategy },
+            new JsonObject { ["inbound"] = Strings(["health"]), ["outbound"] = "vpn" }];
+        // Reject an unusable public IPv6 path before sniff accepts TCP. Browsers can then try IPv4.
+        // Keep the IPv6 TUN even for IPv4 profiles so full VPN cannot leak through a physical IPv6 route.
+        // FakeIP is unmapped before rule matching and LAN/private IPv6 must remain available.
+        var ipv6Ranges = settings.Sites.SelectMany(s => s.IpRanges).Select(Domains.NormalizeCidr).Where(s => s.Contains(':')).Distinct().ToArray();
+        if (settings.Mode == RouteMode.Auto && vpnIpv6 && ipv6Ranges.Length > 0)
+            rules.Add(PublicIpv6Rule(new JsonObject { ["ip_cidr"] = Strings(ipv6Ranges) }, "vpn"));
+        if (captureTraffic && (settings.Mode == RouteMode.On ? !vpnIpv6 : !directIpv6Available && !vpnIpv6))
+            rules.Add(PublicIpv6Rule(null));
+        else if (captureTraffic && settings.Mode == RouteMode.Auto && !vpnIpv6 && ipv6Ranges.Length > 0)
+            rules.Add(PublicIpv6Rule(new JsonObject { ["ip_cidr"] = Strings(ipv6Ranges) }));
+        rules.Add(new JsonObject { ["action"] = "sniff" });
+        rules.Add(new JsonObject { ["protocol"] = "dns", ["action"] = "hijack-dns" });
         // Private LAN traffic stays local, except during explicit health probes above.
         rules.Add(new JsonObject { ["ip_is_private"] = true, ["outbound"] = "direct" });
         if (settings.Mode == RouteMode.Auto)
@@ -63,12 +76,15 @@ public static class CoreConfiguration
             var ips = settings.Sites.SelectMany(s => s.IpRanges).Select(Domains.NormalizeCidr).Distinct().ToArray();
             if (domains.Length > 0)
             {
-                rules.Add(new JsonObject { ["domain_suffix"] = Strings(domains), ["action"] = "resolve", ["server"] = "remote", ["strategy"] = profile.Addresses.Any(a => a.Contains(':')) ? "prefer_ipv4" : "ipv4_only" });
+                rules.Add(new JsonObject { ["domain_suffix"] = Strings(domains), ["action"] = "resolve", ["server"] = "remote", ["strategy"] = vpnStrategy, ["override_destination"] = !vpnIpv6 });
                 rules.Add(new JsonObject { ["domain_suffix"] = Strings(domains), ["outbound"] = "vpn" });
             }
             if (ips.Length > 0) rules.Add(new JsonObject { ["ip_cidr"] = Strings(ips), ["outbound"] = "vpn" });
+            // A dual-stack VPN may still be used on an IPv4-only physical connection. Preserve
+            // selected IPv6 sites above, but re-resolve an unselected sniffed AAAA directly as IPv4.
+            if (!directIpv6Available) rules.Add(new JsonObject { ["ip_version"] = 6, ["action"] = "resolve", ["server"] = "local", ["strategy"] = "ipv4_only", ["override_destination"] = true });
         }
-        else if (settings.Mode == RouteMode.On) rules.Add(new JsonObject { ["action"] = "resolve", ["server"] = "remote", ["strategy"] = profile.Addresses.Any(a => a.Contains(':')) ? "prefer_ipv4" : "ipv4_only" });
+        else if (settings.Mode == RouteMode.On) rules.Add(new JsonObject { ["action"] = "resolve", ["server"] = "remote", ["strategy"] = vpnStrategy, ["override_destination"] = !vpnIpv6 });
         // FakeIP keeps domains distinct even when unrelated sites share a CDN IP.
         JsonArray dnsRules = [];
         if (settings.Mode == RouteMode.Auto)
@@ -92,7 +108,7 @@ public static class CoreConfiguration
                     new JsonObject { ["type"] = "https", ["tag"] = "remote", ["server"] = "1.1.1.1", ["path"] = "/dns-query", ["detour"] = "vpn" },
                     new JsonObject { ["type"] = "fakeip", ["tag"] = "fakeip", ["inet4_range"] = "198.18.0.0/15", ["inet6_range"] = "fc00::/18" }),
                 ["rules"] = dnsRules, ["final"] = settings.Mode == RouteMode.On ? "remote" : "local", ["independent_cache"] = true,
-                ["strategy"] = profile.Addresses.Any(a => a.Contains(':')) ? "prefer_ipv4" : "ipv4_only"
+                ["strategy"] = settings.Mode == RouteMode.On ? vpnStrategy : directIpv6Available || vpnIpv6 ? "prefer_ipv4" : "ipv4_only"
             },
             ["inbounds"] = inbounds, ["endpoints"] = new JsonArray(endpoint),
             ["outbounds"] = new JsonArray(new JsonObject { ["type"] = "direct", ["tag"] = "direct", ["domain_resolver"] = "local" }),
@@ -101,6 +117,16 @@ public static class CoreConfiguration
         if (captureTraffic && dnsCachePath != null)
             result["experimental"] = new JsonObject { ["cache_file"] = new JsonObject { ["enabled"] = true, ["path"] = dnsCachePath, ["cache_id"] = "redroute-dns-v1", ["store_fakeip"] = true } };
         return result;
+    }
+    private static JsonObject PublicIpv6Rule(JsonObject? additional, string? outbound = null)
+    {
+        JsonArray match = [new JsonObject { ["inbound"] = Strings(["tun"]), ["ip_version"] = 6 },
+            new JsonObject { ["ip_is_private"] = true, ["invert"] = true }];
+        if (additional != null) match.Add(additional);
+        var rule = new JsonObject { ["type"] = "logical", ["mode"] = "and", ["rules"] = match };
+        if (outbound != null) rule["outbound"] = outbound;
+        else { rule["action"] = "reject"; rule["method"] = "default"; rule["no_drop"] = true; }
+        return rule;
     }
     private static JsonArray Strings(IEnumerable<string> values) => new(values.Select(v => (JsonNode?)JsonValue.Create(v)).ToArray());
 }

@@ -10,6 +10,12 @@ License: GNU General Public License v3 or later. The original notice is bundled 
 The FakeIP allocation path is also patched to commit its cursor and mapping before
 returning a DNS answer, so a process crash cannot lose or reassign a cached address.
 Regression tests are in `scripts/engine/fakeip_store_test.go` and run before each engine build.
+The IPv6 routing fix is applied by `scripts/engine/patch-ipv6.ps1`. It adds an
+opt-in `override_destination` field to the resolve action, allowing a sniffed
+domain with a cached real IPv6 destination to resolve to IPv4 on an IPv4-only
+outbound. Ordinary IPv6 and IP-only connections retain their original destination.
+Helper, regression tests and generated-rule pre-match checks are distributed in
+the corresponding engine source archive. The packaged engine revision is redroute6.
 The build includes `with_gvisor,with_quic,with_wireguard,with_awg`. Dependency
 versions are recorded in the bundled `service/engine/build-info.txt` and the
 upstream `go.mod`/`go.sum` at the pinned commit. Wintun driver resources and their

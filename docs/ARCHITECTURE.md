@@ -37,6 +37,25 @@ The single-peer `AllowedIPs` remains authoritative; the client does not silently
 expand a server profile's cryptographic destinations. IPv4-only profiles prefer
 IPv4 DNS answers. Actual IPv6 acceptance needs live validation.
 
+Before capture, the service records direct IPv6 source/route availability separately
+from profile IPv6 support. Link-local and ULA addresses on a physical adapter do not
+establish public IPv6 connectivity. The route check uses local UDP source selection
+without transmitting a packet; it does not prove remote IPv6 reachability.
+
+The IPv6 TUN stays present even with an IPv4-only profile, preventing a full-VPN
+bypass through physical IPv6. Public IPv6 with no usable outbound is explicitly
+rejected before sniff, with no_drop enabled so repeated attempts still fail quickly.
+Private/LAN destinations, health probes and unmapped FakeIP domains are excluded.
+With a dual-stack VPN on an IPv4-only uplink, selected IPv6 stays on VPN while an
+unselected sniffed real AAAA is resolved to IPv4 using the direct resolver. A selected
+cached AAAA on an IPv4-only VPN is resolved again through its VPN resolver. The core's
+new resolve override is opt-in and applies only to IPv6 plus a recognized domain.
+
+Physical interface/address/gateway/DNS changes cause the next service tick to release
+capture and rebuild the connection with fresh capabilities. The RED_ROUTE adapter
+is excluded from that comparison. Real browser, OS route and network-change acceptance
+remain separate from the userspace and route-matcher tests.
+
 Catalog refresh pins one Geo-Aggregator commit, bounds download sizes, rejects
 unsafe source paths, and atomically replaces the cache only after all requested
 lists pass validation. A failed refresh retains the old cache. Individual manual

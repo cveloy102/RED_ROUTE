@@ -34,20 +34,33 @@ internal static class NativeCoreLab
             ipc += $"public_key={Convert.ToHexString(Convert.FromBase64String(clientKeys.Public)).ToLowerInvariant()}\npreshared_key={Convert.ToHexString(Convert.FromBase64String(shared)).ToLowerInvariant()}\nendpoint=127.0.0.1:{clientUdp}\nallowed_ip=192.0.2.1/32\nallowed_ip=2001:db8::1/128\n";
             await using var serverProcess = await CoreProcess.StartPeerAsync(folder, protocol, ipc, tunnelHttpPort);
             foreach (var mode in new[] { RouteMode.Auto, RouteMode.On })
+            foreach (var ipv6 in new[] { false, true })
             {
+                var scenario = protocol + "/" + mode + (ipv6 ? "/dual-stack" : "/IPv4-only");
                 var healthPort = Port(); var trafficPort = Port();
                 var settings = new ClientSettings { Mode = mode, Sites = [new("Selected", ["selected.test", "selected-v6.test"], [])] };
-                var config = CoreConfiguration.Build(ConfParser.Parse(Profile(false)), settings, false, healthPort, "lab-password");
+                var profile = Profile(false);
+                if (!ipv6) profile = profile.Replace("192.0.2.1/32, 2001:db8::1/128", "192.0.2.1/32");
+                var config = CoreConfiguration.Build(ConfParser.Parse(profile), settings, false, healthPort, "lab-password");
                 var traffic = config["inbounds"]![0]!.DeepClone(); traffic["tag"] = "traffic"; traffic["listen_port"] = trafficPort; config["inbounds"]!.AsArray().Add(traffic);
                 LocalDns(config);
                 assert(config["inbounds"]!.AsArray().All(n => n!["type"]!.GetValue<string>() != "tun"), protocol + "/" + mode + ": integration lab never creates a system tunnel");
-                await using var clientProcess = await CoreProcess.StartAsync(engine, folder, protocol + "-" + mode, config, healthPort);
+                await using var clientProcess = await CoreProcess.StartAsync(engine, folder, protocol + "-" + mode + (ipv6 ? "-dual" : "-v4"), config, healthPort);
                 using var proxy = new HttpClientHandler { Proxy = new WebProxy($"socks5://127.0.0.1:{trafficPort}") { Credentials = new NetworkCredential("redroute", "lab-password"), BypassProxyOnLocal = false }, UseProxy = true, AllowAutoRedirect = false };
                 using var http = new HttpClient(proxy) { Timeout = TimeSpan.FromSeconds(8) };
                 var response = await http.GetStringAsync($"http://selected.test:{tunnelHttpPort}/probe");
                 assert(response == "VPN-LAB", protocol + "/" + mode + ": selected domain traverses an actual encrypted client/server connection");
-                response = await http.GetStringAsync($"http://selected-v6.test:{tunnelHttpPort}/probe");
-                assert(response == "VPN-LAB", protocol + "/" + mode + ": IPv6 traffic traverses the encrypted userspace tunnel");
+                if (ipv6)
+                {
+                    response = await http.GetStringAsync($"http://selected-v6.test:{tunnelHttpPort}/probe");
+                    assert(response == "VPN-LAB", scenario + ": IPv6 traffic traverses the encrypted userspace tunnel");
+                }
+                using (var cached = new HttpRequestMessage(HttpMethod.Get, $"http://[2001:db8::2]:{tunnelHttpPort}/probe"))
+                {
+                    cached.Headers.Host = "selected.test";
+                    using var cachedResponse = await http.SendAsync(cached);
+                    assert(await cachedResponse.Content.ReadAsStringAsync() == "VPN-LAB", scenario + ": sniffed domain with a cached real AAAA reaches VPN without a physical IPv6 route");
+                }
                 var large = await http.GetStringAsync($"http://selected.test:{tunnelHttpPort}/large");
                 assert(large == string.Concat(Enumerable.Repeat("RED_ROUTE", 16384)), protocol + "/" + mode + ": a multi-packet 144 KiB response is reassembled without corruption");
                 var parallel = await Task.WhenAll(Enumerable.Range(0, 10).Select(_ => http.GetStringAsync($"http://selected.test:{tunnelHttpPort}/probe")));
@@ -58,6 +71,10 @@ internal static class NativeCoreLab
                 {
                     response = await http.GetStringAsync($"http://direct.test:{direct.Port}/probe");
                     assert(response == "DIRECT-LAB", protocol + ": unselected domain uses direct routing in Auto");
+                    using var cachedDirect = new HttpRequestMessage(HttpMethod.Get, $"http://[2001:db8:100::10]:{direct.Port}/probe");
+                    cachedDirect.Headers.Host = "direct.test";
+                    using var directResponse = await http.SendAsync(cachedDirect);
+                    assert(await directResponse.Content.ReadAsStringAsync() == "DIRECT-LAB", scenario + ": unselected cached AAAA resolves locally to IPv4 and never enters VPN");
                 }
                 // SOCKS authentication is a real boundary: unauthenticated local callers cannot borrow the tunnel.
                 using var unauthorizedHandler = new HttpClientHandler { Proxy = new WebProxy($"socks5://127.0.0.1:{healthPort}"), UseProxy = true };

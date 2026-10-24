@@ -3,6 +3,7 @@ namespace RedRoute.Core;
 public interface ITunnelEngine : IAsyncDisposable
 {
     bool IsRunning { get; }
+    bool NetworkChanged => false;
     IReadOnlyList<ProbeResult> LastChecks { get; }
     Task StartAsync(VpnProfile profile, ClientSettings settings, bool captureTraffic, CancellationToken token);
     Task StopAsync(CancellationToken token);
@@ -50,6 +51,12 @@ public sealed class FailoverController
     {
         if (settings.Mode == RouteMode.Off) return;
         if (phase != ConnectionPhase.Connected) { await ConnectAsync(0, token); return; }
+        if (engine.NetworkChanged)
+        {
+            await InterruptedAsync("network_changed");
+            await ConnectAsync(0, token);
+            return;
+        }
         if (await engine.CheckAsync(token))
         {
             var hadFailure = failures > 0; failures = 0; lastSuccess = DateTimeOffset.UtcNow;
