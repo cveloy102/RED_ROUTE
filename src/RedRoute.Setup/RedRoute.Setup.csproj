@@ -1,4 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
  <PropertyGroup><OutputType>WinExe</OutputType><UseWPF>true</UseWPF><AssemblyName>RED_ROUTE-Setup</AssemblyName><ApplicationManifest>setup.manifest</ApplicationManifest><ApplicationIcon>../RedRoute.App/Assets/RedRoute.ico</ApplicationIcon></PropertyGroup>
- <ItemGroup><Compile Include="../RedRoute.App/WindowAppearance.cs" Link="WindowAppearance.cs"/><EmbeddedResource Include="../../artifacts/RED_ROUTE-$(Version)-win-x64.msi" LogicalName="RED_ROUTE.Payload.msi" Condition="Exists('../../artifacts/RED_ROUTE-$(Version)-win-x64.msi')"/></ItemGroup>
+ <ItemGroup><Compile Include="../RedRoute.App/ThemeManager.cs" Link="ThemeManager.cs"/><Compile Include="../RedRoute.App/WindowAppearance.cs" Link="WindowAppearance.cs"/><EmbeddedResource Include="../../artifacts/RED_ROUTE-$(Version)-win-x64.msi" LogicalName="RED_ROUTE.Payload.msi" Condition="Exists('../../artifacts/RED_ROUTE-$(Version)-win-x64.msi')"/></ItemGroup>
 </Project>

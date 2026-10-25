@@ -13,7 +13,7 @@ internal static class TrayIcon
     {
         using var bitmap = new Bitmap(32, 32); using var g = Graphics.FromImage(bitmap);
         g.SmoothingMode = SmoothingMode.AntiAlias;
-        var lightTaskbar = !forMenu && Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "SystemUsesLightTheme", 0) is int light && light == 1;
+        var lightTaskbar = forMenu ? !ThemeManager.IsDark : Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "SystemUsesLightTheme", 0) is int light && light == 1;
         using var pen = new Pen(lightTaskbar ? Color.FromArgb(30, 30, 30) : Color.WhiteSmoke, 3) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
         if (phase is ConnectionPhase.Direct or ConnectionPhase.Error)
         {

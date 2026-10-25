@@ -1,5 +1,6 @@
 param([switch]$SkipEngine, [switch]$SkipInstaller)
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 $root = (Resolve-Path "$PSScriptRoot/..").Path
 $runtimeVersion = '10.0.13'
 Push-Location $root

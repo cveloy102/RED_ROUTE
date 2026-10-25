@@ -101,7 +101,7 @@ public partial class MainWindow : Window
             // Scrolling the catalogue itself must keep it open; moving the page must dismiss it.
             if (e.OriginalSource == MainScroll && (e.VerticalChange != 0 || e.HorizontalChange != 0)) SearchPopup.IsOpen = false;
         };
-        UpdateLists(); UpdateModeButtons(); ShowPage("home");
+        UpdateLists(); UpdateModeButtons(); ShowPage("home"); UpdateThemeButtons();
         StartupCheck.IsChecked = settings.StartWithWindows; FailoverCheck.IsChecked = settings.AutoFailover;
         UpdateTray();
         timer.Tick += async (_, _) => await PollAsync();
@@ -137,9 +137,25 @@ public partial class MainWindow : Window
         HomePage.Visibility = name == "home" ? Visibility.Visible : Visibility.Collapsed;
         ProfilesPage.Visibility = name == "profiles" ? Visibility.Visible : Visibility.Collapsed;
         HelpPage.Visibility = name == "help" ? Visibility.Visible : Visibility.Collapsed;
-        foreach (var (button, active) in new[] { (HomeTab, name == "home"), (ProfilesTab, name == "profiles"), (HelpTab, name == "help") }) button.BorderBrush = active ? Brush("#F0443E") : Brush("#353535");
+        foreach (var (button, active) in new[] { (HomeTab, name == "home"), (ProfilesTab, name == "profiles"), (HelpTab, name == "help") }) button.SetResourceReference(BorderBrushProperty, active ? "AccentBrush" : "BorderBrush");
     }
-    private static SolidColorBrush Brush(string color) => new((Color)ColorConverter.ConvertFromString(color));
+    private void UpdateThemeButtons()
+    {
+        foreach (var (button, choice) in new[] { (SystemThemeButton, ThemeChoice.System), (LightThemeButton, ThemeChoice.Light), (DarkThemeButton, ThemeChoice.Dark) })
+        {
+            button.SetResourceReference(BorderBrushProperty, ThemeManager.Choice == choice ? "AccentBrush" : "BorderBrush");
+            button.SetResourceReference(BackgroundProperty, ThemeManager.Choice == choice ? "SelectedBrush" : "PanelBrush");
+            System.Windows.Automation.AutomationProperties.SetItemStatus(button, ThemeManager.Choice == choice ? "Выбрано" : "");
+        }
+    }
+    private void ChooseTheme(ThemeChoice choice)
+    {
+        try { ThemeManager.Select(choice, !smoke); UpdateThemeButtons(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Notice("Не удалось сохранить тему. Проверьте доступ к папке настроек."); }
+    }
+    private void SystemTheme_Click(object sender, RoutedEventArgs e) => ChooseTheme(ThemeChoice.System);
+    private void LightTheme_Click(object sender, RoutedEventArgs e) => ChooseTheme(ThemeChoice.Light);
+    private void DarkTheme_Click(object sender, RoutedEventArgs e) => ChooseTheme(ThemeChoice.Dark);
     private void Home_Click(object sender, RoutedEventArgs e) => ShowPage("home");
     private void Profiles_Click(object sender, RoutedEventArgs e) => ShowPage("profiles");
     private void Help_Click(object sender, RoutedEventArgs e) => ShowPage("help");
@@ -156,8 +172,8 @@ public partial class MainWindow : Window
     {
         foreach (var (button, mode) in new[] { (OnButton, RouteMode.On), (OffButton, RouteMode.Off), (AutoButton, RouteMode.Auto) })
         {
-            button.BorderBrush = Brush(settings.Mode == mode ? "#F0443E" : "#353535");
-            button.Background = Brush(settings.Mode == mode ? "#271918" : "#181818");
+            button.SetResourceReference(BorderBrushProperty, settings.Mode == mode ? "AccentBrush" : "BorderBrush");
+            button.SetResourceReference(BackgroundProperty, settings.Mode == mode ? "SelectedBrush" : "PanelBrush");
         }
     }
     private void UpdateLists()
@@ -207,7 +223,10 @@ public partial class MainWindow : Window
                     }
                 }
                 StatusTitle.Text = s.Message;
-                StatusTitle.Foreground = Brush(s.Phase == ConnectionPhase.Connected ? "#8CDBAD" : "#E8E4D9");
+                var otherVpns = NetworkDiagnostics.OtherVpns();
+                OtherVpnText.Text = otherVpns.Length == 0 ? "" : "Также включён другой VPN: " + string.Join(", ", otherVpns) + ". Если RED_ROUTE не подключается, оставьте включённым один VPN. Кнопка «Выкл» отключает только RED_ROUTE.";
+                OtherVpnText.Visibility = otherVpns.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+                StatusTitle.SetResourceReference(ForegroundProperty, s.Phase == ConnectionPhase.Connected ? "SuccessBrush" : "InkBrush");
                 StatusDetail.Text = s.Phase switch
                 {
                     ConnectionPhase.Connected when s.Mode == RouteMode.On => "Все сайты и приложения работают через VPN.",
@@ -239,7 +258,7 @@ public partial class MainWindow : Window
         var caption = phase switch { ConnectionPhase.Connected => mode == RouteMode.On ? "Вкл · весь интернет через VPN" : "Авто · только из списка", ConnectionPhase.Connecting => "Подключение · пока напрямую", ConnectionPhase.Off => "Выкл · интернет напрямую", _ => "VPN недоступен · интернет напрямую" };
         tray.Text = ("RED_ROUTE · " + caption)[..Math.Min(63, ("RED_ROUTE · " + caption).Length)];
         if (tray.ContextMenuStrip?.Visible == true) return;
-        var menu = new Forms.ContextMenuStrip { BackColor = System.Drawing.Color.FromArgb(24, 24, 24), ForeColor = System.Drawing.Color.FromArgb(232, 228, 217), ShowImageMargin = true };
+        var menu = new Forms.ContextMenuStrip { BackColor = TrayTheme.Color("PanelBrush"), ForeColor = TrayTheme.Color("InkBrush"), Renderer = new TrayTheme.Renderer(), ShowImageMargin = true };
         menu.Items.Add(new Forms.ToolStripMenuItem(caption) { Enabled = false });
         menu.Items.Add(new Forms.ToolStripSeparator());
         foreach (var (m, title) in new[] { (RouteMode.On, "Вкл — весь интернет через VPN"), (RouteMode.Off, "Выкл — интернет напрямую"), (RouteMode.Auto, "Авто — через VPN только из списка") })
@@ -414,6 +433,7 @@ public partial class MainWindow : Window
                 Architecture = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString(),
                 Status = status, Profiles = settings.Profiles.Select((p, i) => new { Position = i + 1, p.Name, Protocol = ConfParser.Parse(p.Config).IsAmnezia ? "AmneziaWG" : "WireGuard" }),
                 SiteRuleCount = settings.Sites.Count, DatabaseUpdated = settings.DatabaseUpdated,
+                OtherVpnInterfaces = NetworkDiagnostics.OtherVpns(), Theme = ThemeManager.Choice.ToString(),
                 Interfaces = NetworkDiagnostics.Interfaces(), Routes = await NetworkDiagnostics.RoutesAsync(lifetime.Token),
                 EnginePresent = File.Exists(Path.Combine(AppContext.BaseDirectory, "service", "engine", "amnezia-box.exe"))
             };
@@ -439,6 +459,32 @@ public partial class MainWindow : Window
     private void ExitWithCode(int code) { exiting = true; lifetime.Cancel(); timer.Stop(); updateTimer.Stop(); SearchPopup.IsOpen = false; tray.Visible = false; tray.Icon?.Dispose(); tray.Dispose(); Close(); System.Windows.Application.Current.Shutdown(code); }
     private async Task SmokeTestAsync()
     {
+        var preferenceTest = Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", "appearance-fixture.json");
+        try
+        {
+            foreach (var choice in new[] { ThemeChoice.Light, ThemeChoice.Dark, ThemeChoice.System })
+            {
+                ThemeManager.Save(preferenceTest, choice);
+                if (ThemeManager.Load(preferenceTest) != choice) throw new InvalidOperationException("Theme preference did not survive reload");
+            }
+            File.WriteAllText(preferenceTest, "broken");
+            if (ThemeManager.Load(preferenceTest) != ThemeChoice.System) throw new InvalidOperationException("Corrupt appearance file must not prevent startup");
+        }
+        finally { if (File.Exists(preferenceTest)) File.Delete(preferenceTest); }
+        if (ThemeManager.Parse("\"invalid\"") != ThemeChoice.System || ThemeManager.Parse("broken") != ThemeChoice.System || ThemeManager.Parse("\"Light\"") != ThemeChoice.Light)
+            throw new InvalidOperationException("Theme preferences must default to System and tolerate corrupt values");
+        foreach (var systemLight in new[] { true, false })
+        {
+            if (ThemeManager.Resolve(ThemeChoice.System, systemLight) == systemLight || ThemeManager.Resolve(ThemeChoice.Light, systemLight) || !ThemeManager.Resolve(ThemeChoice.Dark, systemLight))
+                throw new InvalidOperationException("System/explicit theme resolution failed");
+        }
+        var initialTheme = ThemeManager.Choice;
+        foreach (var choice in new[] { ThemeChoice.Dark, ThemeChoice.Light, initialTheme })
+        {
+            ChooseTheme(choice); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            if (((SolidColorBrush)Background).Color != ((SolidColorBrush)FindResource("BackgroundBrush")).Color || ((SolidColorBrush)DomainInput.Foreground).Color != ((SolidColorBrush)FindResource("InkBrush")).Color)
+                throw new InvalidOperationException($"Existing windows/input must update: {choice}; window={Background}; expected={FindResource("BackgroundBrush")}; input={DomainInput.Foreground}; ink={FindResource("InkBrush")}");
+        }
         const string profileSecret = "redroute-private-key-automation-fixture";
         settings.Profiles.Add(new(Guid.NewGuid(), "Synthetic accessible profile", "[Interface]\nPrivateKey = " + profileSecret));
         UpdateLists(); ShowPage("profiles"); UpdateLayout(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
@@ -458,7 +504,7 @@ public partial class MainWindow : Window
         DomainInput.Text = "localhost"; await AddDomainAsync(); if (settings.Sites.Count != 1) throw new InvalidOperationException("Validation failed");
         // Exercise only presentation here. Never call recovery or a service command in a UI smoke test.
         DomainInput.Clear(); settings.Mode = RouteMode.Off; UpdateModeButtons(); ShowPage("home"); Feedback.Visibility = Visibility.Collapsed;
-        Directory.CreateDirectory(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui"));
+        Directory.CreateDirectory(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", ThemeManager.IsDark ? "dark" : "light"));
         Advanced_Click(this, new RoutedEventArgs());
         await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
         var advancedLocation = AdvancedPanel.TransformToAncestor(MainScroll).Transform(new Point(0, 0));
@@ -471,7 +517,7 @@ public partial class MainWindow : Window
             window.UpdateLayout();
             var image = new RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, PixelFormats.Pbgra32); image.Render(window);
             var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(image));
-            using var stream = File.Create(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", name + ".png")); png.Save(stream);
+            using var stream = File.Create(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", ThemeManager.IsDark ? "dark" : "light", name + ".png")); png.Save(stream);
         }
         DomainInput.Focus(); ShowSuggestions(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
         if (!SearchPopup.IsOpen || Suggestions.Items.Count < 15000) throw new InvalidOperationException("Empty search must show the visible catalogue");
@@ -479,7 +525,7 @@ public partial class MainWindow : Window
         {
             var popup = (FrameworkElement)SearchPopup.Child; popup.UpdateLayout();
             var image = new RenderTargetBitmap((int)popup.ActualWidth, (int)popup.ActualHeight, 96, 96, PixelFormats.Pbgra32); image.Render(popup);
-            var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(image)); using var output = File.Create(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", name + ".png")); png.Save(output);
+            var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(image)); using var output = File.Create(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", ThemeManager.IsDark ? "dark" : "light", name + ".png")); png.Save(output);
         }
         RenderPopup("catalog-all");
         Suggestions.ScrollIntoView(Suggestions.Items[100]); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
@@ -526,7 +572,7 @@ public partial class MainWindow : Window
             ShowPage(page); UpdateLayout();
             var image = new RenderTargetBitmap((int)ActualWidth, (int)ActualHeight, 96, 96, PixelFormats.Pbgra32); image.Render(this);
             var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(image));
-            using var stream = File.Create(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", name + ".png")); png.Save(stream);
+            using var stream = File.Create(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", ThemeManager.IsDark ? "dark" : "light", name + ".png")); png.Save(stream);
         }
         var previousSites = settings.Sites;
         settings.Sites = Enumerable.Range(0, 500).Select(i => new SiteRule("Rule " + i, ["rule" + i + ".example"], [])).ToList();
@@ -537,7 +583,7 @@ public partial class MainWindow : Window
         if (IsVisible || exiting) throw new InvalidOperationException("Closing the main window must hide it without exiting or stopping VPN");
         OpenWindow(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
         if (!IsVisible) throw new InvalidOperationException("Tray reopen must restore the hidden window");
-        File.WriteAllText(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", "result.txt"), "PASS: native WPF rendering, domain normalization, invalid domain rejection, service suggestions/selection, complete dropdown catalogue, page and catalogue scrolling, already-added entries, themed update/import/deletion dialogs, close-to-tray and reopen. No service, recovery, or network commands executed.");
+        File.WriteAllText(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", "result.txt"), "PASS: System/Light/Dark resolution, corrupt preferences, live palette switch, native WPF rendering, domain normalization, invalid domain rejection, service suggestions/selection, complete dropdown catalogue, page and catalogue scrolling, already-added entries, themed update/import/deletion dialogs, close-to-tray and reopen. No service, recovery, or network commands executed.");
         Exit();
     }
 }

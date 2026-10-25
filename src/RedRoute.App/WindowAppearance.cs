@@ -10,9 +10,15 @@ internal static class WindowAppearance
     public static void Apply(Window window)
     {
         var handle = new WindowInteropHelper(window).Handle;
-        var dark = 1;
+        if (handle == IntPtr.Zero) return;
+        var dark = ThemeManager.IsDark ? 1 : 0;
         if (DwmSetWindowAttribute(handle, 20, ref dark, sizeof(int)) != 0) DwmSetWindowAttribute(handle, 19, ref dark, sizeof(int));
-        var caption = 0x00101010; var text = 0x00D9E4E8; var border = 0x00353535;
+        static int ColorRef(string key)
+        {
+            var color = ((System.Windows.Media.SolidColorBrush)Application.Current.FindResource(key)).Color;
+            return color.R | color.G << 8 | color.B << 16;
+        }
+        var caption = ColorRef("BackgroundBrush"); var text = ColorRef("InkBrush"); var border = ColorRef("BorderBrush");
         DwmSetWindowAttribute(handle, 35, ref caption, sizeof(int));
         DwmSetWindowAttribute(handle, 36, ref text, sizeof(int));
         DwmSetWindowAttribute(handle, 34, ref border, sizeof(int));

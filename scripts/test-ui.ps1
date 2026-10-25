@@ -15,4 +15,5 @@ function Invoke-Smoke([string[]]$Arguments, [int]$ExpectedExit) {
 }
 # A broken UI check must terminate with a failing code, never wait forever in a crash dialog.
 Invoke-Smoke -Arguments @('--smoke-test', '--smoke-test-failure') -ExpectedExit 1
-Invoke-Smoke -Arguments @('--smoke-test') -ExpectedExit 0
+Invoke-Smoke -Arguments @('--smoke-test', '--theme-light') -ExpectedExit 0
+Invoke-Smoke -Arguments @('--smoke-test', '--theme-dark') -ExpectedExit 0

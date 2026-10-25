@@ -6,6 +6,17 @@ namespace RedRoute.Platform;
 
 public static class NetworkDiagnostics
 {
+    public static bool IsOtherVpnAdapter(string name, string description) => !name.Equals("RED_ROUTE", StringComparison.OrdinalIgnoreCase)
+        && new[] { "WireGuard", "Amnezia", "OpenVPN", "TAP-Windows", "Wintun", "TUN/TAP" }.Any(marker => description.Contains(marker, StringComparison.OrdinalIgnoreCase));
+    public static string[] OtherVpns()
+    {
+        try
+        {
+            return NetworkInterface.GetAllNetworkInterfaces().Where(n => n.OperationalStatus == OperationalStatus.Up && IsOtherVpnAdapter(n.Name, n.Description))
+                .Select(n => n.Name).Order().ToArray();
+        }
+        catch (NetworkInformationException) { return []; }
+    }
     public static object[] Interfaces() => NetworkInterface.GetAllNetworkInterfaces().Select(n =>
     {
         var ip = n.GetIPProperties();

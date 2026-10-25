@@ -18,18 +18,18 @@ internal sealed class AppDialog : Window
         WindowStyle = WindowStyle.None; ShowInTaskbar = false;
         WindowChrome.SetWindowChrome(this, new WindowChrome { CaptionHeight = 32, GlassFrameThickness = new Thickness(0), ResizeBorderThickness = new Thickness(0), UseAeroCaptionButtons = false });
         var root = new DockPanel();
-        var caption = new Grid { Height = 32, Background = (Brush)FindResource("BackgroundBrush") };
-        caption.Children.Add(new TextBlock { Text = "RED_ROUTE", FontSize = 12, Foreground = (Brush)FindResource("MutedBrush"), Margin = new Thickness(14, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
+        var caption = new Grid { Height = 32 }; caption.SetResourceReference(Panel.BackgroundProperty, "BackgroundBrush");
+        var captionText = new TextBlock { Text = "RED_ROUTE", FontSize = 12, Margin = new Thickness(14, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center }; captionText.SetResourceReference(TextBlock.ForegroundProperty, "MutedBrush"); caption.Children.Add(captionText);
         var close = new Button { Content = "\uE8BB", HorizontalAlignment = HorizontalAlignment.Right, Style = (Style)FindResource("TitleButton") };
         System.Windows.Automation.AutomationProperties.SetName(close, "Закрыть диалог");
         WindowChrome.SetIsHitTestVisibleInChrome(close, true); close.Click += (_, _) => DialogResult = false;
         caption.Children.Add(close); DockPanel.SetDock(caption, Dock.Top); root.Children.Add(caption);
         Body.Children.Add(new TextBlock { Text = title, FontSize = 22, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 16) });
         root.Children.Add(Body);
-        Content = new Border { BorderBrush = (Brush)new BrushConverter().ConvertFromString("#353535")!, BorderThickness = new Thickness(1), Child = root };
+        var frame = new Border { BorderThickness = new Thickness(1), Child = root }; frame.SetResourceReference(Border.BorderBrushProperty, "BorderBrush"); Content = frame;
         SourceInitialized += (_, _) => WindowAppearance.Apply(this);
     }
-    public void Describe(string message) => Body.Children.Add(new TextBlock { Text = message, Foreground = (Brush)FindResource("MutedBrush"), Margin = new Thickness(0, 0, 0, 18) });
+    public void Describe(string message) { var text = new TextBlock { Text = message, Margin = new Thickness(0, 0, 0, 18) }; text.SetResourceReference(TextBlock.ForegroundProperty, "MutedBrush"); Body.Children.Add(text); }
     public Button AddActions(string accept, Action action, bool acceptDefault = true)
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 20, 0, 0) };

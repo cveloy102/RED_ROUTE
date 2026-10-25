@@ -13,6 +13,7 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        ThemeManager.Start(e.Args.Contains("--smoke-test") || e.Args.Contains("--preview"));
         if (e.Args.Contains("--recover"))
         {
             await Recovery.RunAsync(); Shutdown(); return;
@@ -36,5 +37,5 @@ public partial class App : Application
             Shutdown(1);
         }
     }
-    protected override void OnExit(ExitEventArgs e) { singleton?.Dispose(); base.OnExit(e); }
+    protected override void OnExit(ExitEventArgs e) { ThemeManager.Stop(); singleton?.Dispose(); base.OnExit(e); }
 }
