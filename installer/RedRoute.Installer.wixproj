@@ -1,7 +1,13 @@
 <Project Sdk="WixToolset.Sdk/6.0.2">
  <PropertyGroup>
   <OutputName>RED_ROUTE-$(Version)-win-x64</OutputName><InstallerPlatform>x64</InstallerPlatform>
+  <!-- ICE61 objects to intentionally inclusive same-version upgrades. Other ICEs remain enabled.
+       Four-part versions are forbidden below because MSI would ignore their last component. -->
+  <SuppressIces>ICE61</SuppressIces>
   <DefineConstants>PublishDir=$(MSBuildThisFileDirectory)..\artifacts\publish;ProductVersion=$(Version);$(DefineConstants)</DefineConstants>
  </PropertyGroup>
+ <Target Name="RequireThreePartPackageVersion" BeforeTargets="PrepareForBuild">
+  <Error Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(Version)', '^[0-9]+[.][0-9]+[.][0-9]+$'))" Text="Package version must have exactly three numeric components."/>
+ </Target>
  <ItemGroup><PackageReference Include="WixToolset.UI.wixext" Version="6.0.2"/><PackageReference Include="WixToolset.Util.wixext" Version="6.0.2"/></ItemGroup>
 </Project>

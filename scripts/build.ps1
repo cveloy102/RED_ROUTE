@@ -3,6 +3,9 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $root = (Resolve-Path "$PSScriptRoot/..").Path
 $runtimeVersion = '10.0.13'
+$releaseVersion = ([xml](Get-Content -LiteralPath "$root/Directory.Build.props" -Raw)).Project.PropertyGroup.Version
+# MSI ignores a fourth version field. Keep published package versions unambiguous.
+if ($releaseVersion -notmatch '^\d+\.\d+\.\d+$') { throw 'Release version must have exactly three numeric components' }
 Push-Location $root
 try {
     if (!$SkipEngine) { & "$PSScriptRoot/build-engine.ps1" }

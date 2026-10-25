@@ -18,6 +18,11 @@ Assert-MsiRow 'SELECT `Name` FROM `ServiceInstall` WHERE `Name` = ''RED_ROUTE'''
 Assert-MsiRow 'SELECT `ServiceName` FROM `Wix4ServiceConfig` WHERE `ServiceName` = ''RED_ROUTE'' AND `FirstFailureActionType` = ''restart'' AND `RestartServiceDelayInSeconds` = 5' 'Unexpected service failures trigger automatic restart after five seconds'
 Assert-MsiRow 'SELECT `Property` FROM `Property` WHERE `Property` = ''ALLUSERS'' AND `Value` = ''1''' 'Installation still requires machine-wide privileges'
 Assert-MsiRow 'SELECT `Action` FROM `CustomAction` WHERE `Source` = ''REINSTALLMODE'' AND `Target` = ''amus'' AND `Type` = 51' 'Major upgrade installs a complete matching private runtime regardless of existing file versions'
+$upgrade = $database.OpenView('SELECT `Attributes` FROM `Upgrade` WHERE `ActionProperty` = ''WIX_UPGRADE_DETECTED'''); $upgrade.Execute()
+$upgradeRow = $upgrade.Fetch()
+if ($null -eq $upgradeRow -or ($upgradeRow.IntegerData(1) -band 512) -eq 0) { throw 'Rebuilt installer of the same version must replace the existing product, never install a second copy' }
+$upgrade.Close(); Write-Output 'PASS: Same-version rebuilt package replaces the installed product instead of creating a duplicate'
+Assert-MsiRow 'SELECT `ActionProperty` FROM `Upgrade` WHERE `ActionProperty` = ''WIX_DOWNGRADE_DETECTED''' 'Newer installed versions are still detected to prevent downgrade'
 Assert-MsiRow 'SELECT `Name` FROM `Registry` WHERE `Name` = ''OwnerSid'' AND `Value` = ''[REDROUTEOWNER]''' 'Service ownership uses the interactive user rather than elevated installer credentials'
 Assert-MsiRow 'SELECT `Name` FROM `RegLocator` WHERE `Name` = ''OwnerSid''' 'Upgrade locates and preserves the existing owner'
 Assert-MsiRow 'SELECT `Name` FROM `ServiceControl` WHERE `Name` = ''RED_ROUTE'' AND `Event` = 163 AND `Wait` = 1' 'Install, upgrade and uninstall wait for orderly service shutdown'
