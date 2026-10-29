@@ -16,7 +16,11 @@ public static class CoreConfiguration
             ["allowed_ips"] = Strings(profile.Peer["AllowedIPs"].Split(',').Select(Domains.NormalizeCidr))
         };
         if (profile.Peer.TryGetValue("PresharedKey", out var psk)) peer[profile.IsAmnezia ? "preshared_key" : "pre_shared_key"] = psk;
-        if (profile.Peer.TryGetValue("PersistentKeepalive", out var keep)) peer["persistent_keepalive_interval"] = int.Parse(keep);
+        if (profile.Peer.TryGetValue("PersistentKeepalive", out var keep))
+        {
+            var interval = ConfParser.ParseKeepalive(keep, profile.IsAmnezia);
+            peer["persistent_keepalive_interval"] = interval.Contains('-') ? JsonValue.Create(interval) : JsonValue.Create(int.Parse(interval));
+        }
         JsonObject endpoint = new()
         {
             ["type"] = profile.IsAmnezia ? "awg" : "wireguard", ["tag"] = "vpn",
@@ -39,7 +43,7 @@ public static class CoreConfiguration
             {
                 var field = names.GetValueOrDefault(key, key.ToLowerInvariant());
                 if (new[] { "jc", "jmin", "jmax", "s1", "s2", "s3", "s4" }.Contains(field)) endpoint[field] = int.Parse(value);
-                else if (field is "random_trailers" or "disable_cookies") endpoint[field] = bool.Parse(value);
+                else if (field is "random_trailers" or "disable_cookies") endpoint[field] = ConfParser.ParseBoolean(value, key);
                 else endpoint[field] = value;
             }
         }

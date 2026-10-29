@@ -84,6 +84,7 @@ Assert((await PipeProtocol.ReadAsync<ServiceRequest>(framed, default)).Command =
 using var oversized = new MemoryStream(BitConverter.GetBytes(int.MaxValue));
 try { await PipeProtocol.ReadAsync<ServiceRequest>(oversized, default); throw new Exception("Oversize accepted"); } catch (IOException) { passed++; Console.WriteLine("PASS: Reject oversized IPC before allocation"); }
 var destination = Path.Combine(Environment.CurrentDirectory, "artifacts", "checks"); Directory.CreateDirectory(destination);
+await ProfileImportChecks.RunAsync(config, Assert);
 await ReliabilityChecks.RunAsync(config, Assert);
 await UpdateChecks.RunAsync(Assert);
 await ReleaseValidationChecks.RunAsync(config, Assert);

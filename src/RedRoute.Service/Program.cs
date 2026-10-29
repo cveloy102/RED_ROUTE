@@ -77,15 +77,16 @@ static class ServiceHost
                     var request = await PipeProtocol.ReadAsync<ServiceRequest>(pipe, deadline.Token);
                     ServiceResponse response;
                     if (request.Command == "status") response = new(true, Status: controller.Status);
-                    else if (request.Command is "configure" or "recover" or "update-rules")
+                    else if (request.Command is "configure" or "recover" or "update-rules" or "update-profiles" or "select-primary")
                     {
                         var next = request.Command == "recover" ? System.Text.Json.JsonSerializer.Deserialize<ClientSettings>(System.Text.Json.JsonSerializer.Serialize(settings, Protocol.Json), Protocol.Json)! : request.Settings ?? throw new FormatException("Нет настроек.");
                         if (request.Command == "update-rules") next = SettingsCommands.UpdateRules(settings, next);
+                        if (request.Command is "update-profiles" or "select-primary") next = SettingsCommands.UpdateProfiles(settings, next);
                         if (request.Command == "recover") next.Mode = RouteMode.Off;
                         next.Validate();
                         SecureStore.Save(next, true); settings = next;
                         // Recovery and mode changes cancel even an in-progress candidate probe.
-                        _ = Schedule(t => request.Command == "recover" ? controller.RecoverAsync(t) : controller.ConfigureAsync(next, t), true);
+                        _ = Schedule(t => request.Command == "recover" ? controller.RecoverAsync(t) : controller.ConfigureAsync(next, t, request.Command == "select-primary"), true);
                         response = new(true, Status: controller.Status);
                     }
                     else if (request.Command == "check") { _ = Schedule(controller.TickAsync, false); response = new(true, Status: controller.Status); }

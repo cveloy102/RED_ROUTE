@@ -2,6 +2,12 @@ namespace RedRoute.Core;
 
 public static class SettingsCommands
 {
+    public static ClientSettings UpdateProfiles(ClientSettings current, ClientSettings update) => new()
+    {
+        Mode = update.Profiles.Count == 0 ? RouteMode.Off : current.Mode,
+        Profiles = [.. update.Profiles], AutoFailover = update.AutoFailover,
+        StartWithWindows = update.StartWithWindows, Sites = [.. current.Sites], DatabaseUpdated = current.DatabaseUpdated
+    };
     public static ClientSettings RefreshServices(ClientSettings current, Func<string, SiteRule?> resolve)
     {
         var result = UpdateRules(current, new ClientSettings

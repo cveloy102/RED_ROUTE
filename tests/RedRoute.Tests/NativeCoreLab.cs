@@ -21,7 +21,7 @@ internal static class NativeCoreLab
         {
             var serverUdp = Port(true); var clientUdp = Port(true); var serverHealth = Port();
             var awg = protocol == "wireguard" ? "" : "Jc = 4\nJmin = 40\nJmax = 70\nS1 = 16\nS2 = 24\nH1 = 101-110\nH2 = 201-210\nH3 = 301-310\nH4 = 401-410\n";
-            if (protocol == "awg-advanced") awg += $"S3 = 32\nS4 = 40\nHeaderProtectionKey = {shared}\nContentPaddingAddition = 0-32\nRekeyAfterTime = 110-120\nRekeyTimeout = 4-5\nRejectAfterTime = 170-180\nKeepaliveTimeout = 9-10\nMaxHandshakeAttempts = 18-20\nRandomTrailers = true\nDisableCookies = true\n";
+            if (protocol == "awg-advanced") awg += $"S3 = 32\nS4 = 40\nHeaderProtectionKey = {shared}\nContentPaddingAddition = 0-32\nRekeyAfterTime = 110-120\nRekeyTimeout = 4-5\nRejectAfterTime = 170-180\nKeepaliveTimeout = 9-10\nMaxHandshakeAttempts = 18-20\nRandomTrailers = on\nDisableCookies = on\n";
             string Profile(bool server) => $"[Interface]\nPrivateKey = {(server ? serverKeys.Private : clientKeys.Private)}\nAddress = 192.0.2.{(server ? 2 : 1)}/32, 2001:db8::{(server ? 2 : 1)}/128\nListenPort = {(server ? serverUdp : clientUdp)}\n{awg}[Peer]\nPublicKey = {(server ? clientKeys.Public : serverKeys.Public)}\nPresharedKey = {shared}\nEndpoint = 127.0.0.1:{(server ? clientUdp : serverUdp)}\nAllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 1\n";
             var ipc = $"private_key={Convert.ToHexString(Convert.FromBase64String(serverKeys.Private)).ToLowerInvariant()}\nlisten_port={serverUdp}\n";
             var names = new Dictionary<string, string> { ["HeaderProtectionKey"] = "header_protection_key", ["ContentPaddingAddition"] = "content_padding_addition", ["RekeyAfterTime"] = "rekey_after_time", ["RekeyTimeout"] = "rekey_timeout", ["RejectAfterTime"] = "reject_after_time", ["KeepaliveTimeout"] = "keepalive_timeout", ["MaxHandshakeAttempts"] = "max_handshake_attempts", ["RandomTrailers"] = "random_trailers", ["DisableCookies"] = "disable_cookies" };
@@ -29,6 +29,7 @@ internal static class NativeCoreLab
             {
                 var parts = line.Split(" = ", 2); var field = names.GetValueOrDefault(parts[0], parts[0].ToLowerInvariant());
                 var value = field == "header_protection_key" ? Convert.ToHexString(Convert.FromBase64String(parts[1])).ToLowerInvariant() : parts[1];
+                if (field is "random_trailers" or "disable_cookies") value = ConfParser.ParseBoolean(value, field).ToString().ToLowerInvariant();
                 ipc += field + "=" + value + "\n";
             }
             ipc += $"public_key={Convert.ToHexString(Convert.FromBase64String(clientKeys.Public)).ToLowerInvariant()}\npreshared_key={Convert.ToHexString(Convert.FromBase64String(shared)).ToLowerInvariant()}\nendpoint=127.0.0.1:{clientUdp}\nallowed_ip=192.0.2.1/32\nallowed_ip=2001:db8::1/128\n";
@@ -40,6 +41,7 @@ internal static class NativeCoreLab
                 var healthPort = Port(); var trafficPort = Port();
                 var settings = new ClientSettings { Mode = mode, Sites = [new("Selected", ["selected.test", "selected-v6.test"], [])] };
                 var profile = Profile(false);
+                if (protocol == "awg-advanced") profile = profile.Replace("PersistentKeepalive = 1", "PersistentKeepalive = 1-2");
                 if (!ipv6) profile = profile.Replace("192.0.2.1/32, 2001:db8::1/128", "192.0.2.1/32");
                 var config = CoreConfiguration.Build(ConfParser.Parse(profile), settings, false, healthPort, "lab-password");
                 var traffic = config["inbounds"]![0]!.DeepClone(); traffic["tag"] = "traffic"; traffic["listen_port"] = trafficPort; config["inbounds"]!.AsArray().Add(traffic);

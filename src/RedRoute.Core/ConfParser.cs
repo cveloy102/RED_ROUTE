@@ -68,7 +68,7 @@ public static partial class ConfParser
             }
             else if (key.Length == 2 && key[0] is 'I' or 'i' && "12345".Contains(key[1]) && (value.Length > 4096 || value.Any(char.IsControl))) throw new FormatException("Некорректный I-параметр.");
             else if (key.Equals("HeaderProtectionKey", StringComparison.OrdinalIgnoreCase)) ValidateKey(value);
-            else if ((key.Equals("RandomTrailers", StringComparison.OrdinalIgnoreCase) || key.Equals("DisableCookies", StringComparison.OrdinalIgnoreCase)) && !bool.TryParse(value, out _)) throw new FormatException("Некорректный логический параметр.");
+            else if (key.Equals("RandomTrailers", StringComparison.OrdinalIgnoreCase) || key.Equals("DisableCookies", StringComparison.OrdinalIgnoreCase)) _ = ParseBoolean(value, key);
             else if (new[] { "ContentPaddingAddition", "RekeyAfterTime", "RekeyTimeout", "RejectAfterTime", "KeepaliveTimeout", "MaxHandshakeAttempts" }.Contains(key, StringComparer.OrdinalIgnoreCase)) _ = ParseRange(value, key);
         }
         if (parsed.IsAmnezia)
@@ -83,13 +83,31 @@ public static partial class ConfParser
             var maximum = iface.TryGetValue("Jmax", out var jmax) ? int.Parse(jmax) : 0;
             if (minimum > maximum) throw new FormatException("Jmin не должен быть больше Jmax.");
         }
-        if (peer.TryGetValue("PersistentKeepalive", out var keep)) ValidateNumber(keep, 0, 65535, "PersistentKeepalive");
+        if (peer.TryGetValue("PersistentKeepalive", out var keep)) _ = ParseKeepalive(keep, parsed.IsAmnezia);
         return parsed;
     }
     private static void ValidateKey(string value)
     {
         try { if (Convert.FromBase64String(value).Length != 32) throw new FormatException(); }
         catch (FormatException) { throw new FormatException("Ключ в .conf должен содержать 32 байта в Base64."); }
+    }
+    public static bool ParseBoolean(string value, string key) => value.Trim().ToLowerInvariant() switch
+    {
+        "true" or "on" or "1" => true,
+        "false" or "off" or "0" => false,
+        _ => throw new FormatException($"Некорректный {key}: используйте on/off, true/false или 1/0.")
+    };
+    public static string ParseKeepalive(string value, bool amnezia)
+    {
+        if (value.Equals("off", StringComparison.OrdinalIgnoreCase)) return "0";
+        if (amnezia && value.Contains('-'))
+        {
+            var (first, last) = ParseRange(value, "PersistentKeepalive");
+            if (last > 65535) throw new FormatException("PersistentKeepalive должен быть от 0 до 65535 секунд.");
+            return $"{first}-{last}";
+        }
+        ValidateNumber(value, 0, 65535, "PersistentKeepalive");
+        return int.Parse(value).ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
     private static void ValidateNumber(string value, int min, int max, string key)
     {

@@ -35,7 +35,8 @@ internal static class ReliabilityChecks
             await controller.ConfigureAsync(settings, default);
             assert(engine.Starts.Count == starts && controller.Status.Profile == "Renamed", $"{mode}: metadata and failover settings do not interrupt working tunnel");
             settings.Profiles.Reverse(); await controller.ConfigureAsync(settings, default);
-            assert(engine.Starts.Count == starts && controller.Status.Profile == "Renamed", $"{mode}: changing primary order keeps current working connection");
+            assert(engine.Starts.Count == starts + 2 && controller.Status.Profile == "Reserve", $"{mode}: selecting a new primary actually connects that profile");
+            starts = engine.Starts.Count;
             settings.Sites.Add(new("New", ["new.example.org"], [])); await controller.ConfigureAsync(settings, default);
             assert(engine.Starts.Count == starts + (mode == RouteMode.Auto ? 2 : 0), $"{mode}: only effective routing changes restart capture");
             starts = engine.Starts.Count; settings.Sites.Reverse(); await controller.ConfigureAsync(settings, default);
@@ -55,6 +56,18 @@ internal static class ReliabilityChecks
             var engine = new ControlledEngine(); engine.Checks.Enqueue(false);
             var controller = new FailoverController(engine); await controller.ConfigureAsync(Settings(failover: failover), default);
             assert(failover ? controller.Status.Profile == "Reserve" : controller.Status.Phase == ConnectionPhase.Direct && !engine.IsRunning, $"Unavailable primary, failover={failover}: reserve policy respected");
+        }
+        {
+            var engine = new ControlledEngine(); engine.Checks.Enqueue(false);
+            var controller = new FailoverController(engine); var value = Settings();
+            await controller.ConfigureAsync(value, default);
+            assert(controller.Status.Profile == "Reserve", "Primary-selection regression starts from a working reserve");
+            await controller.ConfigureAsync(value, default, connectPrimary: true);
+            assert(controller.Status.Profile == "Primary", "Explicitly choosing the existing primary returns from a reserve immediately");
+            await controller.RecoverAsync(default);
+            value = SettingsCommands.UpdateProfiles(new ClientSettings { Mode = RouteMode.Off }, value);
+            await controller.ConfigureAsync(value, default, connectPrimary: true);
+            assert(controller.Status.Mode == RouteMode.Off && !engine.IsRunning, "Choosing a primary after recovery never reenables an Off tunnel");
         }
         {
             var engine = new ControlledEngine(); engine.Checks.Enqueue(true); engine.Checks.Enqueue(false);

@@ -5,8 +5,17 @@ NotifyIcon menu. It owns UI settings and import/export. No browser shell.
 `RedRoute.Core` contains validation, configuration generation and failover policy.
 `RedRoute.Platform` contains DPAPI storage, bounded framed IPC, and service lists.
 `RedRoute.Service` runs under LocalSystem, accepts only typed settings and the
-commands configure/status/check/recover, and launches one fixed installed engine.
+commands configure/status/check/recover/update-rules/update-profiles/select-primary,
+and launches one fixed installed engine.
 No executable path, command line or arbitrary JSON core config is accepted over IPC.
+
+Profile edits preserve the service's current mode and routing rules atomically.
+A stale UI profile command cannot reenable a tunnel stopped by standalone recovery.
+Selecting a primary reconnects to it when enabled, including returning from a reserve;
+appending a reserve or renaming a profile preserves a healthy active connection.
+Import validates the entire batch before saving, rejects semantic duplicates and
+keeps errors inside the modal picker. AWG boolean spellings and keepalive ranges
+are preserved through validation, core JSON and native UAPI.
 
 The MSI records the installing user SID in HKLM. The pipe DACL grants that SID,
 SYSTEM and Administrators access and denies the Network SID. The client verifies

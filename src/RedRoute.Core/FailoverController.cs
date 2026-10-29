@@ -28,12 +28,13 @@ public sealed class FailoverController
         foreach (var entry in (previousEvents ?? []).TakeLast(150)) history.Enqueue(entry);
     }
     public EngineStatus Status => Volatile.Read(ref snapshot);
-    public async Task ConfigureAsync(ClientSettings value, CancellationToken token)
+    public async Task ConfigureAsync(ClientSettings value, CancellationToken token, bool connectPrimary = false)
     {
         value.Validate();
         var active = current >= 0 && current < settings.Profiles.Count ? settings.Profiles[current] : null;
+        var primaryChanged = settings.Profiles.FirstOrDefault()?.Id != value.Profiles.FirstOrDefault()?.Id;
         var nextIndex = active == null ? -1 : value.Profiles.FindIndex(p => p.Id == active.Id && p.Config == active.Config);
-        var keepTunnel = phase == ConnectionPhase.Connected && engine.IsRunning && value.Mode == settings.Mode && nextIndex >= 0
+        var keepTunnel = !primaryChanged && !(connectPrimary && nextIndex != 0) && phase == ConnectionPhase.Connected && engine.IsRunning && value.Mode == settings.Mode && nextIndex >= 0
             && (value.Mode != RouteMode.Auto || EffectiveSites(value).SequenceEqual(EffectiveSites(settings)));
         settings = new ClientSettings { Mode = value.Mode, Profiles = [.. value.Profiles], Sites = [.. value.Sites], AutoFailover = value.AutoFailover, DatabaseUpdated = value.DatabaseUpdated, StartWithWindows = value.StartWithWindows };
         if (keepTunnel)

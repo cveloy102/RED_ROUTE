@@ -110,11 +110,23 @@ if (!$cacheText.Contains('// RED_ROUTE: metadata reads are non-destructive.')) {
 Copy-Item -LiteralPath "$PSScriptRoot/engine/fakeip_cache_test.go" -Destination "$source/experimental/cachefile/redroute_fakeip_test.go" -Force
 & "$PSScriptRoot/engine/patch-ipv6.ps1" -Source $source
 & "$PSScriptRoot/engine/patch-awg.ps1" -Go $Go -Source $source
+# Preserve advanced AWG keepalive ranges instead of truncating them to a fixed number.
+$awgOptions = Join-Path $source 'option/awg.go'
+$optionText = [IO.File]::ReadAllText($awgOptions)
+$optionText = [regex]::Replace($optionText, '(PersistentKeepaliveInterval\s+)uint16', '${1}AwgKeepaliveInterval')
+if (!$optionText.Contains('AwgKeepaliveInterval')) { throw 'Pinned AWG keepalive option patch no longer matches source' }
+[IO.File]::WriteAllText($awgOptions, $optionText, [Text.UTF8Encoding]::new($false))
+$awgEndpoint = Join-Path $source 'protocol/awg/endpoint.go'
+$endpointText = [IO.File]::ReadAllText($awgEndpoint).Replace('peer.PersistentKeepaliveInterval != 0', 'peer.PersistentKeepaliveInterval != ""').Replace('format.ToString(peer.PersistentKeepaliveInterval)', 'peer.PersistentKeepaliveInterval.String()')
+if (!$endpointText.Contains('peer.PersistentKeepaliveInterval.String()')) { throw 'Pinned AWG keepalive IPC patch no longer matches source' }
+[IO.File]::WriteAllText($awgEndpoint, $endpointText, [Text.UTF8Encoding]::new($false))
+Copy-Item -LiteralPath "$PSScriptRoot/engine/redroute_keepalive.go" -Destination "$source/option/redroute_keepalive.go" -Force
+Copy-Item -LiteralPath "$PSScriptRoot/engine/redroute_keepalive_test.go" -Destination "$source/protocol/awg/redroute_keepalive_test.go" -Force
 & $Go test -C $source ./dns/transport/fakeip ./experimental/cachefile ./protocol/awg ./route -count=1 -timeout=90s
 if ($LASTEXITCODE -ne 0) { throw 'DNS crash durability checks failed' }
 & $Go test -C $source github.com/amnezia-vpn/amneziawg-go/v3/device -run '^(TestTwoDevicePing|TestAWGDevicePing|TestNoiseHandshake|TestConcurrencySafety|TestUpDown)$' -count=1 -timeout=90s
 if ($LASTEXITCODE -ne 0) { throw 'AWG packet and concurrency checks failed' }
-& $Go build -C $source -tags 'with_gvisor,with_quic,with_wireguard,with_awg' -trimpath -ldflags '-s -w -X github.com/sagernet/sing-box/constant.Version=1.260910.0-redroute7' -o "$destination/amnezia-box.exe" ./cmd/sing-box
+& $Go build -C $source -tags 'with_gvisor,with_quic,with_wireguard,with_awg' -trimpath -ldflags '-s -w -X github.com/sagernet/sing-box/constant.Version=1.260910.0-redroute8' -o "$destination/amnezia-box.exe" ./cmd/sing-box
 if ($LASTEXITCODE -ne 0) { throw 'VPN core build failed' }
 New-Item -ItemType Directory -Force "$root/artifacts/checks" | Out-Null
 & $Go build -C $source -trimpath -o "$root/artifacts/checks/redroute-lab-server.exe" "$root/tools/native-lab-server/main.go"

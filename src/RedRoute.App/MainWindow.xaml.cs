@@ -184,24 +184,26 @@ public partial class MainWindow : Window
         DatabaseText.Text = settings.DatabaseUpdated is { } date ? $"База обновлена: {date.LocalDateTime:g}" : "База сервисов ещё не загружена";
     }
     private void Notice(string text) { Feedback.Text = text; Feedback.Visibility = Visibility.Visible; }
-    private async Task ApplyAsync(bool preserveMode = false)
+    private async Task<bool> ApplyAsync(bool preserveMode = false, bool profilesOnly = false, bool connectPrimary = false)
     {
-        if (smoke) { UpdateLists(); return; }
-        var held = false;
+        if (smoke) { UpdateLists(); return true; }
+        var held = false; var saved = false;
         try
         {
             await applyGate.WaitAsync(lifetime.Token); held = true;
-            SecureStore.Save(settings);
-            if (!preserveMode) { requestedMode = settings.Mode; modeRequestDeadline = DateTimeOffset.UtcNow.AddSeconds(30); }
-            var response = await PipeProtocol.CallAsync(new(preserveMode ? "update-rules" : "configure", settings), lifetime.Token);
-            if (!response.Success) { Notice(response.Error ?? "Не удалось применить настройки."); return; }
+            SecureStore.Save(settings); saved = true;
+            if (!preserveMode && !profilesOnly) { requestedMode = settings.Mode; modeRequestDeadline = DateTimeOffset.UtcNow.AddSeconds(30); }
+            if (profilesOnly) requestedMode = null;
+            var response = await PipeProtocol.CallAsync(new(connectPrimary ? "select-primary" : profilesOnly ? "update-profiles" : preserveMode ? "update-rules" : "configure", settings), lifetime.Token);
+            if (!response.Success) { Notice(response.Error ?? "Не удалось применить настройки."); return saved; }
             Notice("Настройки сохранены. Состояние подключения обновится автоматически.");
         }
-        catch (Exception ex) when (ex is IOException or OperationCanceledException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
+        catch (Exception ex) when (ex is IOException or OperationCanceledException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException or FormatException)
         {
-            Notice("Настройки сохранены локально. Служба недоступна: установите RED_ROUTE через установщик или запустите восстановление.");
+            Notice(saved ? "Настройки сохранены локально. Служба недоступна: установите RED_ROUTE через установщик или запустите восстановление." : "Не удалось сохранить настройки. Проверьте доступ к папке настроек.");
         }
         finally { if (held) applyGate.Release(); UpdateLists(); UpdateModeButtons(); }
+        return saved;
     }
     private async Task PollAsync()
     {
@@ -314,49 +316,50 @@ public partial class MainWindow : Window
         catch (Exception ex) when (ex is FormatException or ArgumentException) { Notice(ex.Message); }
     }
     private async void RemoveSite_Click(object sender, RoutedEventArgs e) { if ((sender as FrameworkElement)?.DataContext is SiteRow row) { settings.Sites.Remove(row.Rule); await ApplyAsync(); } }
-    private async void ImportProfile_Click(object sender, RoutedEventArgs e)
+    private void ImportProfile_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new ProfilePicker(this);
-        if (!dialog.ShowDialog()) return;
-        try
-        {
-            var imported = new List<VpnProfile>();
-            foreach (var path in dialog.FileNames)
-            {
-                if (new FileInfo(path).Length > 65536) throw new FormatException("Слишком большой .conf.");
-                var config = await File.ReadAllTextAsync(path); _ = ConfParser.Parse(config);
-                if (settings.Profiles.Any(p => p.Config.Trim() == config.Trim()) || imported.Any(p => p.Config.Trim() == config.Trim())) continue;
-                imported.Add(new(Guid.NewGuid(), Path.GetFileNameWithoutExtension(path), config));
-            }
-            var candidate = new ClientSettings { Profiles = settings.Profiles.Concat(imported).ToList(), Sites = settings.Sites }; candidate.Validate();
-            settings.Profiles.AddRange(imported); await ApplyAsync(); Notice($"Добавлено профилей: {imported.Count}. Первый в списке — основной.");
-        }
-        catch (Exception ex) when (ex is IOException or FormatException or UnauthorizedAccessException) { Notice(ex is FormatException ? ex.Message : "Не удалось прочитать файл профиля."); }
+        var dialog = new ProfilePicker(this, import: ImportProfileFilesAsync);
+        dialog.ShowDialog();
     }
-    private async void MakePrimary_Click(object sender, RoutedEventArgs e) { if ((sender as FrameworkElement)?.DataContext is ProfileRow row) { settings.Profiles.Remove(row.Profile); settings.Profiles.Insert(0, row.Profile); await ApplyAsync(); } }
+    private async Task<string?> ImportProfileFilesAsync(string[] paths)
+    {
+        var result = await ProfileImport.ReadAsync(settings, paths, lifetime.Token);
+        if (result.Added == 0) return "Этот профиль уже добавлен. Выберите другой файл .conf — существующее подключение не изменено.";
+        var previous = settings.Profiles;
+        settings.Profiles = result.Profiles.ToList();
+        if (!await ApplyAsync(profilesOnly: true))
+        {
+            settings.Profiles = previous; UpdateLists();
+            return "Не удалось сохранить новые профили. Текущие профили остались без изменений.";
+        }
+        Notice($"Добавлено профилей: {result.Added}." + (result.Duplicates > 0 ? $" Уже были добавлены: {result.Duplicates}." : "")
+            + " Чтобы переключиться, выберите «Сделать главным» у нужного профиля.");
+        return null;
+    }
+    private async void MakePrimary_Click(object sender, RoutedEventArgs e) { if ((sender as FrameworkElement)?.DataContext is ProfileRow row) { settings.Profiles.Remove(row.Profile); settings.Profiles.Insert(0, row.Profile); await ApplyAsync(profilesOnly: true, connectPrimary: true); } }
     private async void MoveUp_Click(object sender, RoutedEventArgs e) => await MoveProfileAsync(sender, -1);
     private async void MoveDown_Click(object sender, RoutedEventArgs e) => await MoveProfileAsync(sender, 1);
     private async Task MoveProfileAsync(object sender, int step)
     {
         if ((sender as FrameworkElement)?.DataContext is not ProfileRow row) return;
         var target = row.Position + step; if (target < 0 || target >= settings.Profiles.Count) return;
-        settings.Profiles.RemoveAt(row.Position); settings.Profiles.Insert(target, row.Profile); await ApplyAsync();
+        settings.Profiles.RemoveAt(row.Position); settings.Profiles.Insert(target, row.Profile); await ApplyAsync(profilesOnly: true);
     }
     private async void RenameProfile_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not ProfileRow row) return;
         var name = Prompt("Название профиля", row.Profile.Name); if (string.IsNullOrWhiteSpace(name)) return;
         if (name.Length > 80 || name.Any(char.IsControl)) { Notice("Название должно содержать от 1 до 80 символов."); return; }
-        settings.Profiles[row.Position] = row.Profile with { Name = name }; await ApplyAsync();
+        settings.Profiles[row.Position] = row.Profile with { Name = name }; await ApplyAsync(profilesOnly: true);
     }
     private async void RemoveProfile_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not ProfileRow row) return;
         if (!AppDialog.Confirm(this, "Удалить профиль?", $"Профиль «{row.Profile.Name}» будет удалён из RED_ROUTE. Исходный файл .conf останется."
             + (settings.Profiles.Count == 1 ? " Это последний профиль: VPN будет выключен." : row.Position == 0 ? " Основным станет следующий профиль в списке." : ""), "Удалить профиль")) return;
-        settings.Profiles.Remove(row.Profile); if (settings.Profiles.Count == 0) settings.Mode = RouteMode.Off; await ApplyAsync();
+        settings.Profiles.Remove(row.Profile); if (settings.Profiles.Count == 0) settings.Mode = RouteMode.Off; await ApplyAsync(profilesOnly: true);
     }
-    private async void Failover_Click(object sender, RoutedEventArgs e) { settings.AutoFailover = FailoverCheck.IsChecked == true; await ApplyAsync(); }
+    private async void Failover_Click(object sender, RoutedEventArgs e) { settings.AutoFailover = FailoverCheck.IsChecked == true; await ApplyAsync(profilesOnly: true); }
     private void Advanced_Click(object sender, RoutedEventArgs e)
     {
         AdvancedPanel.Visibility = AdvancedPanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
@@ -499,6 +502,7 @@ public partial class MainWindow : Window
         if (!profileNames.Any(n => n.Contains("Synthetic accessible profile")) || profileNames.Any(n => n.Contains(profileSecret) || n.Contains("PrivateKey")))
             throw new InvalidOperationException("Profile accessibility must expose its name without configuration or secrets");
         settings.Profiles.Clear(); UpdateLists(); ShowPage("home");
+        await ProfileImportSmokeAsync();
         DomainInput.Text = "https://example.org/path"; await AddDomainAsync();
         if (settings.Sites.Count != 1 || settings.Sites[0].Domains[0] != "example.org") throw new InvalidOperationException("Domain UI failed");
         DomainInput.Text = "localhost"; await AddDomainAsync(); if (settings.Sites.Count != 1) throw new InvalidOperationException("Validation failed");
@@ -583,7 +587,7 @@ public partial class MainWindow : Window
         if (IsVisible || exiting) throw new InvalidOperationException("Closing the main window must hide it without exiting or stopping VPN");
         OpenWindow(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
         if (!IsVisible) throw new InvalidOperationException("Tray reopen must restore the hidden window");
-        File.WriteAllText(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", "result.txt"), "PASS: System/Light/Dark resolution, corrupt preferences, live palette switch, native WPF rendering, domain normalization, invalid domain rejection, service suggestions/selection, complete dropdown catalogue, page and catalogue scrolling, already-added entries, themed update/import/deletion dialogs, close-to-tray and reopen. No service, recovery, or network commands executed.");
+        File.WriteAllText(Path.Combine(Environment.CurrentDirectory, "artifacts", "ui", "result.txt"), "PASS: modal second-profile import, explicit duplicate/invalid-file feedback, short-dialog action visibility, System/Light/Dark resolution, corrupt preferences, live palette switch, native WPF rendering, domain normalization, invalid domain rejection, service suggestions/selection, complete dropdown catalogue, page and catalogue scrolling, already-added entries, themed update/import/deletion dialogs, close-to-tray and reopen. No service, recovery, or network commands executed.");
         Exit();
     }
 }
