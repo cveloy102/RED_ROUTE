@@ -27,11 +27,22 @@ public static class Domains
     {
         if (string.IsNullOrWhiteSpace(value)) throw new FormatException("Введите IP-адрес или подсеть.");
         var parts = value.Trim().Split('/');
-        if (parts.Length > 2 || !IPAddress.TryParse(parts[0], out var ip)) throw new FormatException("Некорректный IP-адрес или подсеть.");
+        // IPAddress.TryParse also accepts legacy IPv4 forms ("10.1" -> 10.0.0.1, "010.0.0.1" -> 8.0.0.1 as octal).
+        // A rule must never silently target a different address than the one the user typed.
+        if (parts.Length > 2 || !IPAddress.TryParse(parts[0], out var ip)
+            || ip.AddressFamily == AddressFamily.InterNetwork && !IsDottedDecimal(parts[0]))
+            throw new FormatException("Некорректный IP-адрес или подсеть.");
         var max = ip.AddressFamily == AddressFamily.InterNetwork ? 32 : 128;
         if (ip.AddressFamily == AddressFamily.InterNetworkV6 && ip.ScopeId != 0) throw new FormatException("IPv6-адрес с зоной интерфейса не поддерживается в правиле подсети.");
         var bits = max;
-        if (parts.Length == 2 && (!int.TryParse(parts[1], out bits) || bits < 0 || bits > max)) throw new FormatException("Некорректная маска подсети.");
+        if (parts.Length == 2 && (parts[1].Length is < 1 or > 3 || !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out bits) || bits > max))
+            throw new FormatException("Некорректная маска подсети.");
         return $"{ip}/{bits}";
+    }
+    private static bool IsDottedDecimal(string value)
+    {
+        var octets = value.Split('.');
+        return octets.Length == 4 && octets.All(o => o.Length is >= 1 and <= 3 && o.All(char.IsAsciiDigit)
+            && (o.Length == 1 || o[0] != '0') && int.Parse(o, CultureInfo.InvariantCulture) <= 255);
     }
 }

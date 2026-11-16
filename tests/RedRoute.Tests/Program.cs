@@ -42,6 +42,11 @@ Reject(() => Domains.Normalize("https://user:secret@example.org"), "Reject URL c
 Reject(() => Domains.Normalize("127.0.0.1"), "IP must be an explicit IP rule");
 Reject(() => Domains.NormalizeCidr("1.2.3.4/33"), "Reject invalid prefix");
 Assert(Domains.NormalizeCidr("2001:db8::1") == "2001:db8::1/128", "IPv6 CIDR");
+foreach (var legacy in new[] { "123", "10.1", "1.2.3", "010.0.0.1", "0x7f.0.0.1", "1.2.3.256", "1.2.3.4/+8", "1.2.3.4/ 8", "1.2.3.4/" })
+    Reject(() => Domains.NormalizeCidr(legacy), "Reject ambiguous IPv4 form " + legacy);
+Assert(Domains.NormalizeCidr("0.0.0.0/0") == "0.0.0.0/0" && Domains.NormalizeCidr(" 10.0.0.0/8 ") == "10.0.0.0/8" && Domains.NormalizeCidr("192.168.1.10") == "192.168.1.10/32", "Dotted-decimal IPv4 rules stay accepted");
+Reject(() => SettingsCommands.UpdateProfiles(new ClientSettings(), new ClientSettings { Profiles = null! }), "IPC profile update without a list is a validation error");
+Reject(() => SettingsCommands.UpdateRules(new ClientSettings(), new ClientSettings { Sites = null! }), "IPC rule update without a list is a validation error");
 var parsed = ConfParser.Parse(config);
 var printableProfile = new VpnProfile(Guid.NewGuid(), "Synthetic profile", config).ToString();
 Assert(printableProfile.Contains("Synthetic profile") && !printableProfile.Contains(key) && !printableProfile.Contains("PrivateKey") && !printableProfile.Contains("Endpoint"), "Profile string/automation representation excludes the configuration and all key material");

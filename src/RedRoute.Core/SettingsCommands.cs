@@ -2,7 +2,10 @@ namespace RedRoute.Core;
 
 public static class SettingsCommands
 {
-    public static ClientSettings UpdateProfiles(ClientSettings current, ClientSettings update) => new()
+    // IPC input is deserialized JSON: a missing list must be a validation error, not a service crash.
+    public static ClientSettings UpdateProfiles(ClientSettings current, ClientSettings update) => update.Profiles == null
+        ? throw new FormatException("Нет списка профилей.")
+        : new()
     {
         Mode = update.Profiles.Count == 0 ? RouteMode.Off : current.Mode,
         Profiles = [.. update.Profiles], AutoFailover = update.AutoFailover,
@@ -18,7 +21,9 @@ public static class SettingsCommands
         result.Validate();
         return result;
     }
-    public static ClientSettings UpdateRules(ClientSettings current, ClientSettings update) => new()
+    public static ClientSettings UpdateRules(ClientSettings current, ClientSettings update) => update.Sites == null
+        ? throw new FormatException("Нет списка правил.")
+        : new()
     {
         Mode = current.Mode, Profiles = [.. current.Profiles], AutoFailover = current.AutoFailover,
         StartWithWindows = current.StartWithWindows, Sites = [.. update.Sites], DatabaseUpdated = update.DatabaseUpdated

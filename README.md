@@ -77,7 +77,7 @@ AmneziaWG BRO_2 работает самостоятельно, но при ег�
 
 Публикация: изменить Version в Directory.Build.props, собрать и отправить тег `vX.Y.Z`.
 GitHub Actions публикует установщик, MSI, контрольную сумму и исходники ядра.
-Результаты проверки: [docs/TEST-REPORT-0.1.10.md](docs/TEST-REPORT-0.1.10.md).
+Результаты проверки: [docs/TEST-REPORT-1.0.1.md](docs/TEST-REPORT-1.0.1.md).
 
 ## Разрешения и восстановление
 

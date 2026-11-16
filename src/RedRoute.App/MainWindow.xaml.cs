@@ -387,7 +387,12 @@ public partial class MainWindow : Window
     private async void AddIp_Click(object sender, RoutedEventArgs e)
     {
         var input = Prompt("IP-адрес или подсеть", ""); if (input == null) return;
-        try { var cidr = Domains.NormalizeCidr(input); if (!settings.Sites.Any(s => s.IpRanges.Contains(cidr)) && TryAddRule(new(cidr, [], [cidr]))) await ApplyAsync(); }
+        try
+        {
+            var cidr = Domains.NormalizeCidr(input);
+            if (settings.Sites.Any(s => s.IpRanges.Contains(cidr))) { Notice("Этот IP-адрес или подсеть уже есть в списке."); return; }
+            if (TryAddRule(new(cidr, [], [cidr]))) await ApplyAsync();
+        }
         catch (FormatException ex) { Notice(ex.Message); }
     }
     private async void ExportRules_Click(object sender, RoutedEventArgs e)
@@ -417,7 +422,8 @@ public partial class MainWindow : Window
             if (settings.StartWithWindows) key.SetValue("RED_ROUTE", $"\"{Environment.ProcessPath}\" --tray"); else key.DeleteValue("RED_ROUTE", false);
             SecureStore.Save(settings);
         }
-        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException) { Notice("Не удалось изменить автозапуск."); }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or System.Security.SecurityException or System.Security.Cryptography.CryptographicException)
+        { Notice("Не удалось изменить автозапуск."); }
     }
     private async void Check_Click(object sender, RoutedEventArgs e)
     {
@@ -442,13 +448,15 @@ public partial class MainWindow : Window
             };
             await File.WriteAllTextAsync(dialog.FileName, JsonSerializer.Serialize(report, new JsonSerializerOptions(Protocol.Json) { WriteIndented = true })); Notice("Отчёт сохранён. Его можно передать для помощи.");
         }
-        catch (Exception ex) when (ex is IOException or FormatException) { Notice("Не удалось сохранить отчёт."); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FormatException) { Notice("Не удалось сохранить отчёт."); }
     }
     private async void Recover_Click(object sender, RoutedEventArgs e) => await RecoverAsync();
     private async Task<bool> RecoverAsync()
     {
         settings.Mode = RouteMode.Off;
-        if (!smoke) SecureStore.Save(settings);
+        // Recovery must proceed even if the local settings file cannot be written.
+        try { if (!smoke) SecureStore.Save(settings); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException or FormatException) { }
         UpdateModeButtons();
         if (smoke || await Recovery.RunAsync()) { Notice("Команда восстановления выполнена. VPN выключен."); await PollAsync(); return true; }
         return false;
