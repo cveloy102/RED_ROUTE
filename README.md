@@ -4,7 +4,7 @@
 служба Windows и встроенное официальное ядро Amnezia. Название режима всегда
 сопровождается объяснением.
 
-[Скачать EXE](https://github.com/cveloy102/RED_ROUTE/releases/download/v1.0.1/RED_ROUTE-1.0.1-Setup.exe) · [Скачать MSI](https://github.com/cveloy102/RED_ROUTE/releases/download/v1.0.1/RED_ROUTE-1.0.1-win-x64.msi) · [Страница приложения](https://cveloy102.github.io/red-route/)
+[Скачать EXE](https://github.com/cveloy102/RED_ROUTE/releases/download/v1.0.2/RED_ROUTE-1.0.2-Setup.exe) · [Скачать MSI](https://github.com/cveloy102/RED_ROUTE/releases/download/v1.0.2/RED_ROUTE-1.0.2-win-x64.msi) · [Страница приложения](https://cveloy102.github.io/red-route/)
 
 <img src="docs/images/main.png" width="520" alt="Главное окно RED_ROUTE с тремя режимами подключения">
 
@@ -25,8 +25,8 @@
 
 ## Установка
 
-Основной установщик в формате [EXE](https://github.com/cveloy102/RED_ROUTE/releases/download/v1.0.1/RED_ROUTE-1.0.1-Setup.exe) показывает прогресс Windows Installer и результат в одном окне.
-Для автоматизированной установки подходит [пакет MSI](https://github.com/cveloy102/RED_ROUTE/releases/download/v1.0.1/RED_ROUTE-1.0.1-win-x64.msi).
+Основной установщик в формате [EXE](https://github.com/cveloy102/RED_ROUTE/releases/download/v1.0.2/RED_ROUTE-1.0.2-Setup.exe) показывает прогресс Windows Installer и результат в одном окне.
+Для автоматизированной установки подходит [пакет MSI](https://github.com/cveloy102/RED_ROUTE/releases/download/v1.0.2/RED_ROUTE-1.0.2-win-x64.msi).
 Запустить установщик, разрешить UAC, затем открыть RED_ROUTE из меню «Пуск».
 Мастер показывает приветствие и экран успешного завершения. Кнопка «Готово»
 закрывает установщик и открывает приложение, если отмечен флажок запуска.
