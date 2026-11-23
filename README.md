@@ -4,6 +4,10 @@
 служба Windows и встроенное официальное ядро Amnezia. Название режима всегда
 сопровождается объяснением.
 
+[Скачать EXE](https://github.com/cveloy102/RED_ROUTE/releases/download/v1.0.1/RED_ROUTE-1.0.1-Setup.exe) · [Скачать MSI](https://github.com/cveloy102/RED_ROUTE/releases/download/v1.0.1/RED_ROUTE-1.0.1-win-x64.msi) · [Страница приложения](https://cveloy102.github.io/red-route/)
+
+<img src="docs/images/main.png" width="520" alt="Главное окно RED_ROUTE с тремя режимами подключения">
+
 - **Вкл** — весь публичный интернет через VPN; локальная сеть остаётся доступна.
 - **Выкл** — туннель остановлен, обычный интернет напрямую.
 - **Авто** — выбранные сайты/сервисы через VPN, остальное напрямую.
@@ -21,9 +25,8 @@
 
 ## Установка
 
-Основной установщик: `artifacts/RED_ROUTE-1.0.1-Setup.exe` — окно WPF в выбранной теме,
-непрерывный прогресс от Windows Installer и завершение в том же окне.
-Для автоматизированной установки также доступен `artifacts/RED_ROUTE-1.0.1-win-x64.msi`.
+Основной установщик в формате [EXE](https://github.com/cveloy102/RED_ROUTE/releases/download/v1.0.1/RED_ROUTE-1.0.1-Setup.exe) показывает прогресс Windows Installer и результат в одном окне.
+Для автоматизированной установки подходит [пакет MSI](https://github.com/cveloy102/RED_ROUTE/releases/download/v1.0.1/RED_ROUTE-1.0.1-win-x64.msi).
 Запустить установщик, разрешить UAC, затем открыть RED_ROUTE из меню «Пуск».
 Мастер показывает приветствие и экран успешного завершения. Кнопка «Готово»
 закрывает установщик и открывает приложение, если отмечен флажок запуска.
