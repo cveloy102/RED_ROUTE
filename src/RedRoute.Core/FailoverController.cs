@@ -121,7 +121,7 @@ public sealed class FailoverController
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 // Exception messages may contain profile secrets or raw engine configuration.
-                Set("engine_error", $"Не удалось подключить профиль. Код: {ex.GetType().Name}.");
+                Set("engine_error", ex is EngineException safe ? $"Не удалось подключить профиль. {safe.Message}" : $"Не удалось подключить профиль. Код: {ex.GetType().Name}.");
             }
             finally
             {

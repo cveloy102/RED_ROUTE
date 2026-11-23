@@ -37,15 +37,21 @@ bounded events, not raw engine logs. New configure/recover cancels the previous
 operation; one serialized gate protects engine ownership.
 
 AWG is an in-process userspace network endpoint inside the core (`useIntegratedTun=false`);
-the only system TUN is the routing inbound. It uses `auto_route=true`,
-`strict_route=false`; no kill switch or persistent firewall policy is installed.
+the only system TUN is the routing inbound. It uses `auto_route=true`. In On mode it
+also sets `strict_route=true`: dynamic-session WFP filters block DNS (port 53) outside the
+TUN for every process except the core, preventing Windows' multihomed resolver from
+querying the ISP's DNS. Windows removes the dynamic filters when the core exits, so no
+persistent firewall policy or kill switch remains. Auto keeps `strict_route=false`.
 Windows Job Object kill-on-close owns the child core, so a service crash releases
 TUN handles. Normal stop and recovery also clear the Windows DNS resolver cache.
 No physical adapter DNS, default gateway, proxy or third-party route is rewritten
 by C# code. FakeIP domain identity avoids routing unrelated shared-CDN IPs wholesale.
 
 DNS: local resolver for direct destinations/server bootstrap; DNS-over-HTTPS via
-VPN for VPN destinations. Endpoint hostnames are resolved before starting capture.
+VPN for VPN destinations. When the profile's `DNS` names a private resolver inside
+AllowedIPs (for example AmneziaDNS or 10.8.0.1), that resolver is used through the tunnel
+instead, so servers that block 1.1.1.1 keep working. Import rejects profiles whose
+AllowedIPs do not cover all public IPv4: health checks and DNS must traverse the tunnel. Endpoint hostnames are resolved before starting capture.
 The single-peer `AllowedIPs` remains authoritative; the client does not silently
 expand a server profile's cryptographic destinations. IPv4-only profiles prefer
 IPv4 DNS answers. Actual IPv6 acceptance needs live validation.

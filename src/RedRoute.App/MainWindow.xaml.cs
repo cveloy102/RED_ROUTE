@@ -41,6 +41,7 @@ public partial class MainWindow : Window
     private sealed record ProfileRow(VpnProfile Profile, int Position) { public string Title => $"{Position + 1}. {Profile.Name}"; public string Description => Position == 0 ? "Основной · подключаемся первым" : "Резерв · при недоступности предыдущего"; public override string ToString() => Title; }
     private sealed record SuggestionRow(CatalogChoice Choice, bool Added) { public bool CanAdd => !Added; public string ActionText => Added ? "✓ Добавлено" : "+ Добавить"; }
     private bool choosingSuggestion;
+    private (RouteMode, ConnectionPhase, bool, bool)? trayState;
     private void ShowSuggestions()
     {
         if (Suggestions == null || choosingSuggestion) return;
@@ -225,7 +226,7 @@ public partial class MainWindow : Window
                     }
                 }
                 StatusTitle.Text = s.Message;
-                var otherVpns = NetworkDiagnostics.OtherVpns();
+                var otherVpns = await Task.Run(NetworkDiagnostics.OtherVpns);
                 OtherVpnText.Text = otherVpns.Length == 0 ? "" : "Также включён другой VPN: " + string.Join(", ", otherVpns) + ". Если RED_ROUTE не подключается, оставьте включённым один VPN. Кнопка «Выкл» отключает только RED_ROUTE.";
                 OtherVpnText.Visibility = otherVpns.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
                 StatusTitle.SetResourceReference(ForegroundProperty, s.Phase == ConnectionPhase.Connected ? "SuccessBrush" : "InkBrush");
@@ -256,10 +257,14 @@ public partial class MainWindow : Window
     {
         var phase = status?.Phase ?? (settings.Mode == RouteMode.Off ? ConnectionPhase.Off : ConnectionPhase.Error);
         var mode = status?.Mode ?? settings.Mode;
+        var trayKey = (mode, phase, ThemeManager.IsDark, TrayIcon.TaskbarIsLight());
+        if (trayState == trayKey && tray.ContextMenuStrip != null) return;
+        // Rebuild icon and menu only when mode, phase or theme changed; polling runs every 2 s even when hidden.
         var previous = tray.Icon; tray.Icon = TrayIcon.Create(mode, phase); previous?.Dispose();
         var caption = phase switch { ConnectionPhase.Connected => mode == RouteMode.On ? "Вкл · весь интернет через VPN" : "Авто · только из списка", ConnectionPhase.Connecting => "Подключение · пока напрямую", ConnectionPhase.Off => "Выкл · интернет напрямую", _ => "VPN недоступен · интернет напрямую" };
         tray.Text = ("RED_ROUTE · " + caption)[..Math.Min(63, ("RED_ROUTE · " + caption).Length)];
         if (tray.ContextMenuStrip?.Visible == true) return;
+        trayState = trayKey;
         var menu = new Forms.ContextMenuStrip { BackColor = TrayTheme.Color("PanelBrush"), ForeColor = TrayTheme.Color("InkBrush"), Renderer = new TrayTheme.Renderer(), ShowImageMargin = true };
         menu.Items.Add(new Forms.ToolStripMenuItem(caption) { Enabled = false });
         menu.Items.Add(new Forms.ToolStripSeparator());
@@ -417,16 +422,17 @@ public partial class MainWindow : Window
             if (settings.StartWithWindows) key.SetValue("RED_ROUTE", $"\"{Environment.ProcessPath}\" --tray"); else key.DeleteValue("RED_ROUTE", false);
             SecureStore.Save(settings);
         }
-        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException) { Notice("Не удалось изменить автозапуск."); }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or System.Security.SecurityException or System.Security.Cryptography.CryptographicException) { Notice("Не удалось изменить автозапуск."); }
     }
     private async void Check_Click(object sender, RoutedEventArgs e)
     {
         try { var response = await PipeProtocol.CallAsync(new("check"), lifetime.Token); Notice(response.Success ? "Проверка запрошена. Результат появится в событиях." : response.Error ?? "Проверка недоступна."); }
-        catch (Exception ex) when (ex is IOException or OperationCanceledException) { Notice("Служба недоступна. Используйте восстановление интернета."); }
+        catch (Exception ex) when (ex is IOException or OperationCanceledException or UnauthorizedAccessException) { Notice(ex is UnauthorizedAccessException ? "Управление службой доступно только пользователю, который установил RED_ROUTE, и администраторам." : "Служба недоступна. Используйте восстановление интернета."); }
         await PollAsync();
     }
     private async void SaveReport_Click(object sender, RoutedEventArgs e)
     {
+        if (!AppDialog.Confirm(this, "Сохранить отчёт?", "Отчёт содержит состояние подключения, названия профилей, сетевые адаптеры, их IP-адреса (включая публичный IPv6), DNS и маршруты. Ключи и файлы .conf в отчёт не входят. Передавайте его только тем, кому доверяете.", "Сохранить отчёт")) return;
         var dialog = new SaveFileDialog { Filter = "Отчёт RED_ROUTE (*.json)|*.json", FileName = $"RED_ROUTE-diagnostics-{DateTime.Now:yyyyMMdd-HHmm}.json" }; if (dialog.ShowDialog(this) != true) return;
         try
         {
@@ -442,13 +448,18 @@ public partial class MainWindow : Window
             };
             await File.WriteAllTextAsync(dialog.FileName, JsonSerializer.Serialize(report, new JsonSerializerOptions(Protocol.Json) { WriteIndented = true })); Notice("Отчёт сохранён. Его можно передать для помощи.");
         }
-        catch (Exception ex) when (ex is IOException or FormatException) { Notice("Не удалось сохранить отчёт."); }
+        catch (Exception ex) when (ex is IOException or FormatException or UnauthorizedAccessException or NetworkInformationException or System.Security.SecurityException) { Notice("Не удалось сохранить отчёт. Выберите другую папку."); }
     }
     private async void Recover_Click(object sender, RoutedEventArgs e) => await RecoverAsync();
     private async Task<bool> RecoverAsync()
     {
         settings.Mode = RouteMode.Off;
-        if (!smoke) SecureStore.Save(settings);
+        if (!smoke)
+        {
+            // A local settings failure must not prevent the service from releasing the tunnel.
+            try { SecureStore.Save(settings); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException) { }
+        }
         UpdateModeButtons();
         if (smoke || await Recovery.RunAsync()) { Notice("Команда восстановления выполнена. VPN выключен."); await PollAsync(); return true; }
         return false;

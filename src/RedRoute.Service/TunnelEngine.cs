@@ -20,6 +20,8 @@ public sealed class TunnelEngine : ITunnelEngine
     private bool configuredIpv6, effectiveIpv6, measuredIpv6, ipv6Changed;
     private DateTimeOffset lastIpv6Probe;
     private ProbeResult[] ipv6Checks = [];
+    private readonly Ipv6ChangeDetector ipv6Policy = new();
+    private volatile string? lastEngineError;
     private IntPtr job;
     private readonly string runtimeFile = Path.Combine(SecureStore.ServiceDirectory, "runtime.json");
     private readonly string executable = Path.Combine(AppContext.BaseDirectory, "engine", "amnezia-box.exe");
@@ -50,21 +52,30 @@ public sealed class TunnelEngine : ITunnelEngine
         // A profile's IPv6 address does not prove that its server can reach IPv6 Internet.
         // Only reuse a measured result from the immediately preceding route-free candidate.
         effectiveIpv6 = configuredIpv6 && (!captureTraffic || probedNetworkProfile == probeKey && measuredIpv6);
-        ipv6Changed = false;
+        ipv6Changed = false; ipv6Policy.Reset();
         var json = CoreConfiguration.Build(parsed, settings, captureTraffic, healthPort, password, directDns?.Server, directDns?.Interface, Path.Combine(SecureStore.ServiceDirectory, "dns-cache.db"), directIpv6, effectiveIpv6).ToJsonString();
-        await File.WriteAllTextAsync(runtimeFile, json, token);
+        token.ThrowIfCancellationRequested();
+        // A fresh file inherits the protected directory ACL; never truncate a pre-existing file and keep its ACL.
+        SecureStore.WriteNewFile(runtimeFile, json);
+        lastEngineError = null;
         var info = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(executable)!, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true };
         info.ArgumentList.Add("run"); info.ArgumentList.Add("-c"); info.ArgumentList.Add(runtimeFile);
         process = Process.Start(info) ?? throw new IOException("Не удалось запустить ядро.");
         var readiness = new EngineReadiness();
         // Raw engine logs can contain destinations; drain without retaining them in the diagnostic report.
-        process.OutputDataReceived += (_, e) => readiness.Observe(e.Data); process.ErrorDataReceived += (_, _) => { };
+        // Keep only a sanitized category of the last fatal/error line so a failed start can be explained.
+        process.OutputDataReceived += (_, e) => readiness.Observe(e.Data);
+        process.ErrorDataReceived += (_, e) => { if (EngineLog.Summarize(e.Data) is { } summary) lastEngineError = summary; };
         process.BeginOutputReadLine(); process.BeginErrorReadLine();
         job = Native.CreateKillJob(process.Handle);
         for (var i = 0; i < 150; i++)
         {
             token.ThrowIfCancellationRequested();
-            if (process.HasExited) throw new IOException("Ядро VPN завершилось при запуске.");
+            if (process.HasExited)
+            {
+                process.WaitForExit(); // Flush redirected stderr callbacks.
+                throw new EngineException("Ядро VPN завершилось при запуске" + (lastEngineError is { } detail ? ": " + detail : "."));
+            }
             // The health listener can open before the TUN routes/DNS have been installed.
             if (!readiness.IsReady) { await Task.Delay(100, token); continue; }
             using var tcp = new TcpClient();
@@ -96,7 +107,8 @@ public sealed class TunnelEngine : ITunnelEngine
             ipv6Checks = await ProbeAsync(true, token);
             measuredIpv6 = ipv6Checks.Any(c => c.Success);
             lastIpv6Probe = DateTimeOffset.UtcNow;
-            ipv6Changed = measuredIpv6 != effectiveIpv6;
+            // Rebuilding the tunnel interrupts working IPv4 traffic. Require a stable change, not one lost probe.
+            ipv6Changed = ipv6Policy.Observe(measuredIpv6, effectiveIpv6);
         }
         LastChecks = [.. checks, .. ipv6Checks];
         return checks.Any(c => c.Success);

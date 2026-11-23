@@ -53,11 +53,16 @@ public static class CoreConfiguration
             ["users"] = new JsonArray(new JsonObject { ["username"] = "redroute", ["password"] = password })
         }];
         if (configuredIpv6) inbounds[0]!["users"]!.AsArray().Add(new JsonObject { ["username"] = "redroute-ipv6", ["password"] = password });
+        // "Вкл" means all traffic, DNS included, uses the tunnel. Without strict_route Windows' multihomed resolver
+        // also queries the physical adapter's DNS (the ISP). strict_route adds WFP filters that block port 53
+        // outside the TUN for every process except the core. The WFP session is dynamic: Windows removes the
+        // filters when the core exits or is killed, so a crash still falls back to the direct connection.
+        // Auto keeps direct DNS for unlisted sites and does not install the filters.
         if (captureTraffic) inbounds.Add(new JsonObject
         {
             ["type"] = "tun", ["tag"] = "tun", ["interface_name"] = "RED_ROUTE",
             ["address"] = Strings(new[] { "172.30.255.1/30", "fdfe:dcba:9876::1/126" }),
-            ["mtu"] = 1280, ["auto_route"] = true, ["strict_route"] = false, ["stack"] = "mixed"
+            ["mtu"] = 1280, ["auto_route"] = true, ["strict_route"] = settings.Mode == RouteMode.On, ["stack"] = "mixed"
         });
         // AWG's userspace netstack has no resolver of its own. Resolve domains in the routing core before dialing it.
         JsonArray rules = [new JsonObject { ["inbound"] = Strings(["health"]), ["auth_user"] = Strings(["redroute"]), ["action"] = "resolve", ["server"] = "remote", ["strategy"] = vpnStrategy },
@@ -116,7 +121,7 @@ public static class CoreConfiguration
             ["dns"] = new JsonObject
             {
                 ["servers"] = new JsonArray(localDns,
-                    new JsonObject { ["type"] = "https", ["tag"] = "remote", ["server"] = "1.1.1.1", ["path"] = "/dns-query", ["detour"] = "vpn" },
+                    RemoteDns(profile, vpnIpv6),
                     new JsonObject { ["type"] = "fakeip", ["tag"] = "fakeip", ["inet4_range"] = "198.18.0.0/15", ["inet6_range"] = "fc00::/18" }),
                 ["rules"] = dnsRules, ["final"] = settings.Mode == RouteMode.On ? "remote" : "local", ["independent_cache"] = true,
                 ["strategy"] = settings.Mode == RouteMode.On ? vpnStrategy : directIpv6Available || vpnIpv6 ? "prefer_ipv4" : "ipv4_only"
@@ -129,6 +134,10 @@ public static class CoreConfiguration
             result["experimental"] = new JsonObject { ["cache_file"] = new JsonObject { ["enabled"] = true, ["path"] = dnsCachePath, ["cache_id"] = "redroute-dns-v1", ["store_fakeip"] = true } };
         return result;
     }
+    // The profile's own in-tunnel resolver works even where the server blocks 1.1.1.1; otherwise keep encrypted DNS.
+    private static JsonObject RemoteDns(ParsedProfile profile, bool vpnIpv6) => ProfileRequirements.TunnelDnsServer(profile, vpnIpv6) is { } own
+        ? new JsonObject { ["type"] = "udp", ["tag"] = "remote", ["server"] = own.ToString(), ["detour"] = "vpn" }
+        : new JsonObject { ["type"] = "https", ["tag"] = "remote", ["server"] = "1.1.1.1", ["path"] = "/dns-query", ["detour"] = "vpn" };
     private static JsonObject PublicIpv6Rule(JsonObject? additional, string? outbound = null)
     {
         JsonArray match = [new JsonObject { ["inbound"] = Strings(["tun"]), ["ip_version"] = 6 },

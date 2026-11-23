@@ -9,15 +9,38 @@ namespace RedRoute.Platform;
 public static class DirectNetwork
 {
     // Exclude our adapter so creating/removing a TUN cannot trigger a reconnect loop.
-    public static string Fingerprint() => string.Join("|", NetworkInterface.GetAllNetworkInterfaces()
-        .Where(n => n.Name != "RED_ROUTE" && n.NetworkInterfaceType != NetworkInterfaceType.Loopback)
-        .OrderBy(n => n.Id).Select(n =>
+    // Only adapters that can carry the default route matter. Virtual switches (Hyper-V/WSL/Docker) without a
+    // gateway and rotating temporary IPv6 interface identifiers must not tear down a working tunnel.
+    public static string Fingerprint() => Fingerprint(NetworkInterface.GetAllNetworkInterfaces()
+        .Where(n => n.Name != "RED_ROUTE" && n.NetworkInterfaceType != NetworkInterfaceType.Loopback && n.OperationalStatus == OperationalStatus.Up)
+        .Select(n =>
         {
             var p = n.GetIPProperties();
-            return n.Id + ":" + n.OperationalStatus + ":" + string.Join(",", p.UnicastAddresses.Select(a => a.Address.ToString()).Order())
-                + ":" + string.Join(",", p.GatewayAddresses.Select(a => a.Address.ToString()).Order())
-                + ":" + string.Join(",", p.DnsAddresses.Select(a => a.ToString()).Order());
+            return (n.Id, p.UnicastAddresses.Select(a => (a.Address, a.PrefixLength)), p.GatewayAddresses.Select(a => a.Address), (IEnumerable<IPAddress>)p.DnsAddresses);
         }));
+
+    internal static string Fingerprint(IEnumerable<(string Id, IEnumerable<(IPAddress Address, int PrefixLength)> Unicast, IEnumerable<IPAddress> Gateways, IEnumerable<IPAddress> Dns)> adapters)
+        => string.Join("|", adapters
+            .Where(n => n.Gateways.Any(g => !g.Equals(IPAddress.Any) && !g.Equals(IPAddress.IPv6Any)))
+            .OrderBy(n => n.Id, StringComparer.Ordinal).Select(n =>
+                n.Id + ":" + string.Join(",", n.Unicast.Where(a => !a.Address.IsIPv6LinkLocal).Select(a => Network(a.Address, a.PrefixLength)).Distinct().Order(StringComparer.Ordinal))
+                + ":" + string.Join(",", n.Gateways.Select(a => a.ToString()).Order(StringComparer.Ordinal))
+                + ":" + string.Join(",", n.Dns.Select(a => a.ToString()).Order(StringComparer.Ordinal))));
+
+    // IPv4 keeps the full address. IPv6 keeps only the routed prefix (at most /64): privacy addresses rotate
+    // their interface identifier daily while the network itself is unchanged.
+    private static string Network(IPAddress address, int prefixLength)
+    {
+        if (address.AddressFamily != AddressFamily.InterNetworkV6) return address.ToString();
+        var bits = Math.Clamp(prefixLength, 0, 64);
+        var bytes = address.GetAddressBytes();
+        for (var i = 0; i < 16; i++)
+        {
+            var keep = Math.Clamp(bits - i * 8, 0, 8);
+            bytes[i] &= (byte)(0xFF << (8 - keep));
+        }
+        return new IPAddress(bytes) + "/" + bits;
+    }
 
     // Called before TUN creation. UDP Connect performs local route/source selection without sending data.
     // A DNS answer or an IPv6-enabled adapter alone is not evidence of an external IPv6 route.

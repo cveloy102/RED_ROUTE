@@ -83,6 +83,21 @@ public sealed class GitHubUpdates
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
+    /// <summary>
+    /// Opens the installer so that it cannot be written, renamed or deleted, then verifies the bytes behind that
+    /// handle. Keep the stream open until the elevated process has started: the checked file is then the one run.
+    /// </summary>
+    public static FileStream OpenVerified(string path, ReleaseUpdate release)
+    {
+        var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        try
+        {
+            if (stream.Length != release.Size || !Convert.ToHexString(SHA256.HashData(stream)).Equals(release.Sha256, StringComparison.OrdinalIgnoreCase))
+                throw new IOException("Проверка установщика не пройдена. Файл не будет запущен.");
+            return stream;
+        }
+        catch { stream.Dispose(); throw; }
+    }
     private static async Task<bool> VerifyAsync(string path, ReleaseUpdate release, CancellationToken token)
     {
         if (new FileInfo(path).Length != release.Size) return false;

@@ -19,6 +19,8 @@ public static class ProfileImport
             if (new FileInfo(path).Length > 65536) throw new FormatException("Слишком большой .conf. Допустимо до 64 КБ.");
             var config = await File.ReadAllTextAsync(path, token);
             var parsed = ConfParser.Parse(config);
+            if (!ProfileRequirements.CoversPublicIpv4(parsed))
+                throw new FormatException("AllowedIPs профиля не охватывает весь интернет (нужно 0.0.0.0/0). RED_ROUTE проверяет связь и DNS через туннель, поэтому профиль с частичным туннелем не сможет подключиться. Выбор сайтов делается режимом «Авто».");
             if (!identities.Add(Identity(parsed))) { duplicates++; continue; }
             var name = Path.GetFileNameWithoutExtension(path).Trim();
             if (name.Length == 0) name = "Профиль";

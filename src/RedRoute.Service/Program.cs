@@ -43,7 +43,15 @@ static class ServiceHost
         var journal = new ServiceEventJournal();
         var controller = new FailoverController(engine, journal.Load(), journal.Save);
         ClientSettings settings;
-        try { settings = SecureStore.Load(true); } catch { settings = new(); }
+        try { settings = SecureStore.Load(true); }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // Keep a copy: the next configure command overwrites the unreadable file.
+            var original = Path.Combine(SecureStore.ServiceDirectory, "settings.dpapi");
+            try { if (File.Exists(original)) File.Copy(original, original + ".backup-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss"), true); }
+            catch (Exception copy) when (copy is IOException or UnauthorizedAccessException) { }
+            settings = new();
+        }
         using var cycle = CancellationTokenSource.CreateLinkedTokenSource(stop);
         await using var operations = new OperationQueue(cycle.Token, controller.InterruptedAsync);
         Task Schedule(Func<CancellationToken, Task> action, bool preempt) => operations.Schedule(action, preempt);
@@ -65,35 +73,59 @@ static class ServiceHost
         pipeSecurity.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.NetworkSid, null), PipeAccessRights.FullControl, AccessControlType.Deny));
         foreach (var sid in new[] { new SecurityIdentifier(owner), new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null) })
             pipeSecurity.AddAccessRule(new PipeAccessRule(sid, PipeAccessRights.FullControl, AccessControlType.Allow));
+        ServiceResponse Handle(ServiceRequest request)
+        {
+            if (request.Command == "status") return new(true, Status: controller.Status);
+            if (request.Command == "check") { _ = Schedule(controller.TickAsync, false); return new(true, Status: controller.Status); }
+            if (request.Command is not ("configure" or "recover" or "update-rules" or "update-profiles" or "select-primary")) return new(false, "Неизвестная команда.");
+            ClientSettings next;
+            try
+            {
+                next = request.Command == "recover" ? System.Text.Json.JsonSerializer.Deserialize<ClientSettings>(System.Text.Json.JsonSerializer.Serialize(settings, Protocol.Json), Protocol.Json)! : request.Settings ?? throw new FormatException("Нет настроек.");
+                if (request.Command == "update-rules") next = SettingsCommands.UpdateRules(settings, next);
+                if (request.Command is "update-profiles" or "select-primary") next = SettingsCommands.UpdateProfiles(settings, next);
+                if (request.Command == "recover") next.Mode = RouteMode.Off;
+                next.Validate();
+            }
+            catch (FormatException ex) { return new(false, ex.Message); }
+            try { SecureStore.Save(next, true); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
+            {
+                // Recovery must still release the tunnel even when the settings file cannot be written.
+                if (request.Command == "recover") { settings = next; _ = Schedule(controller.RecoverAsync, true); }
+                return new(false, "Служба не смогла сохранить настройки (" + ex.GetType().Name + ")." + (request.Command == "recover" ? " VPN выключен до перезапуска службы." : ""));
+            }
+            settings = next;
+            // Recovery and mode changes cancel even an in-progress candidate probe.
+            _ = Schedule(t => request.Command == "recover" ? controller.RecoverAsync(t) : controller.ConfigureAsync(next, t, request.Command == "select-primary"), true);
+            return new(true, Status: controller.Status);
+        }
         try
         {
             while (!stop.IsCancellationRequested)
             {
-                using var pipe = NamedPipeServerStreamAcl.Create(Protocol.PipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 16384, 16384, pipeSecurity);
-                await pipe.WaitForConnectionAsync(stop);
-                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(stop); deadline.CancelAfter(TimeSpan.FromSeconds(8));
-                try
+                NamedPipeServerStream pipe;
+                try { pipe = NamedPipeServerStreamAcl.Create(Protocol.PipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 16384, 16384, pipeSecurity); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
-                    var request = await PipeProtocol.ReadAsync<ServiceRequest>(pipe, deadline.Token);
-                    ServiceResponse response;
-                    if (request.Command == "status") response = new(true, Status: controller.Status);
-                    else if (request.Command is "configure" or "recover" or "update-rules" or "update-profiles" or "select-primary")
-                    {
-                        var next = request.Command == "recover" ? System.Text.Json.JsonSerializer.Deserialize<ClientSettings>(System.Text.Json.JsonSerializer.Serialize(settings, Protocol.Json), Protocol.Json)! : request.Settings ?? throw new FormatException("Нет настроек.");
-                        if (request.Command == "update-rules") next = SettingsCommands.UpdateRules(settings, next);
-                        if (request.Command is "update-profiles" or "select-primary") next = SettingsCommands.UpdateProfiles(settings, next);
-                        if (request.Command == "recover") next.Mode = RouteMode.Off;
-                        next.Validate();
-                        SecureStore.Save(next, true); settings = next;
-                        // Recovery and mode changes cancel even an in-progress candidate probe.
-                        _ = Schedule(t => request.Command == "recover" ? controller.RecoverAsync(t) : controller.ConfigureAsync(next, t, request.Command == "select-primary"), true);
-                        response = new(true, Status: controller.Status);
-                    }
-                    else if (request.Command == "check") { _ = Schedule(controller.TickAsync, false); response = new(true, Status: controller.Status); }
-                    else response = new(false, "Неизвестная команда.");
-                    await PipeProtocol.WriteAsync(pipe, response, deadline.Token);
+                    // Another process may hold the name. Keep routing alive and retry instead of crashing the service.
+                    try { await Task.Delay(TimeSpan.FromSeconds(2), stop); } catch (OperationCanceledException) { break; }
+                    continue;
                 }
-                catch (Exception ex) when (ex is IOException or OperationCanceledException or FormatException or System.Text.Json.JsonException) { }
+                using (pipe)
+                {
+                    try { await pipe.WaitForConnectionAsync(stop); }
+                    catch (OperationCanceledException) when (stop.IsCancellationRequested) { break; }
+                    catch (IOException) { continue; }
+                    using var deadline = CancellationTokenSource.CreateLinkedTokenSource(stop); deadline.CancelAfter(TimeSpan.FromSeconds(8));
+                    try
+                    {
+                        var request = await PipeProtocol.ReadAsync<ServiceRequest>(pipe, deadline.Token);
+                        await PipeProtocol.WriteAsync(pipe, Handle(request), deadline.Token);
+                    }
+                    // One malformed or failed request must never stop the service and drop the tunnel.
+                    catch (Exception ex) when (ex is not OutOfMemoryException) { }
+                }
             }
         }
         finally

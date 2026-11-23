@@ -15,7 +15,7 @@ opt-in `override_destination` field to the resolve action, allowing a sniffed
 domain with a cached real IPv6 destination to resolve to IPv4 on an IPv4-only
 outbound. Ordinary IPv6 and IP-only connections retain their original destination.
 Helper, regression tests and generated-rule pre-match checks are distributed in
-the corresponding engine source archive. The packaged engine revision is redroute8.
+the corresponding engine source archive. The packaged engine revision is redroute9.
 The CLI companion also emits the fixed RED_ROUTE_READY protocol line only after
 all Box.Start stages complete. The service uses this signal instead of treating
 an already listening health port as proof that OS capture routes are ready.
@@ -44,8 +44,8 @@ license are included in the corresponding engine source archive. Upstream
 device packet/handshake/concurrency tests run before each build.
 
 Security updates are pinned by build-engine.ps1 to golang.org/x/net v0.60.0,
-golang.org/x/crypto v0.57.0 and golang.org/x/text v0.42.0. The engine is built
-with Go 1.26.10. The resulting go.mod/go.sum and dependency versions are shipped
+golang.org/x/crypto v0.57.0, golang.org/x/text v0.42.0, github.com/andybalholm/brotli v1.2.7
+and github.com/klauspost/compress v1.20.2. The engine is built with Go 1.26.11. The resulting go.mod/go.sum and dependency versions are shipped
 in the source archive and build-info.txt.
 
 В redroute8 передача PersistentKeepalive для AmneziaWG сохраняет диапазоны из .conf (например 25-35); обычные числовые значения и отдельный WireGuard остаются совместимыми. Патч и проверки находятся в scripts/engine/redroute_keepalive*.go.
