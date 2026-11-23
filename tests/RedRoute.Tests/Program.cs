@@ -102,6 +102,7 @@ Ipv6RoutingChecks.Run(config, Assert);
 await Ipv6RoutingChecks.CheckNetworkChangeAsync(config, Assert);
 await ReadinessChecks.RunAsync(Assert);
 await FailoverMatrixChecks.RunAsync(config, Assert);
+await AuditFixChecks.RunAsync(config, Assert);
 if (args.Contains("--native-lab")) await NativeCoreLab.RunAsync(Assert);
 foreach (var (name, awg, mode, capture) in new[] { ("awg-auto", true, RouteMode.Auto, true), ("awg-probe", true, RouteMode.Auto, false), ("awg-on", true, RouteMode.On, true), ("wg-auto", false, RouteMode.Auto, true) })
 {

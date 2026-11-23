@@ -116,7 +116,7 @@ public static class CoreConfiguration
             ["dns"] = new JsonObject
             {
                 ["servers"] = new JsonArray(localDns,
-                    new JsonObject { ["type"] = "https", ["tag"] = "remote", ["server"] = "1.1.1.1", ["path"] = "/dns-query", ["detour"] = "vpn" },
+                    RemoteDns(profile, vpnIpv6),
                     new JsonObject { ["type"] = "fakeip", ["tag"] = "fakeip", ["inet4_range"] = "198.18.0.0/15", ["inet6_range"] = "fc00::/18" }),
                 ["rules"] = dnsRules, ["final"] = settings.Mode == RouteMode.On ? "remote" : "local", ["independent_cache"] = true,
                 ["strategy"] = settings.Mode == RouteMode.On ? vpnStrategy : directIpv6Available || vpnIpv6 ? "prefer_ipv4" : "ipv4_only"
@@ -129,6 +129,10 @@ public static class CoreConfiguration
             result["experimental"] = new JsonObject { ["cache_file"] = new JsonObject { ["enabled"] = true, ["path"] = dnsCachePath, ["cache_id"] = "redroute-dns-v1", ["store_fakeip"] = true } };
         return result;
     }
+    // The profile's own in-tunnel resolver works even where the server blocks 1.1.1.1; otherwise keep encrypted DNS.
+    private static JsonObject RemoteDns(ParsedProfile profile, bool vpnIpv6) => ProfileRequirements.TunnelDnsServer(profile, vpnIpv6) is { } own
+        ? new JsonObject { ["type"] = "udp", ["tag"] = "remote", ["server"] = own.ToString(), ["detour"] = "vpn" }
+        : new JsonObject { ["type"] = "https", ["tag"] = "remote", ["server"] = "1.1.1.1", ["path"] = "/dns-query", ["detour"] = "vpn" };
     private static JsonObject PublicIpv6Rule(JsonObject? additional, string? outbound = null)
     {
         JsonArray match = [new JsonObject { ["inbound"] = Strings(["tun"]), ["ip_version"] = 6 },

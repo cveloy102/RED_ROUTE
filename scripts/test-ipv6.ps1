@@ -1,4 +1,4 @@
-param([string]$Go = "$PSScriptRoot/../.tools/go1.26.10/go/bin/go.exe")
+param([string]$Go = "$PSScriptRoot/../.tools/go1.26.11/go/bin/go.exe")
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path "$PSScriptRoot/..").Path
 if (!(Test-Path -LiteralPath $Go)) { $Go = (Get-Command go -ErrorAction Stop).Source }

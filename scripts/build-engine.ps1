@@ -1,4 +1,4 @@
-param([string]$Go = "$PSScriptRoot/../.tools/go1.26.10/go/bin/go.exe")
+param([string]$Go = "$PSScriptRoot/../.tools/go1.26.11/go/bin/go.exe")
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path "$PSScriptRoot/..").Path
 $revision = '16724484cfa00d9b2c14d8280dc055564e2e12ba'
@@ -6,11 +6,15 @@ $source = Join-Path $root 'vendor/amnezia-box'
 $destination = Join-Path $root 'artifacts/engine'
 New-Item -ItemType Directory -Force $source,$destination,(Join-Path $root '.tools') | Out-Null
 if (!(Test-Path "$source/go.mod")) {
-    $archive = Join-Path $root '.tools/amnezia-box.zip'
-    Invoke-WebRequest "https://github.com/amnezia-vpn/amnezia-box/archive/$revision.zip" -OutFile $archive
-    Expand-Archive -LiteralPath $archive -DestinationPath "$root/vendor" -Force
-    $extracted = Join-Path $root "vendor/amnezia-box-$revision"
-    Get-ChildItem -LiteralPath $extracted -Force | Move-Item -Destination $source
+    # Fetch the exact commit with git: objects are content-addressed, so the tree is verified against
+    # the pinned revision (a downloaded archive would only be trusted by its URL).
+    git init -q $source
+    git -C $source fetch -q --depth 1 https://github.com/amnezia-vpn/amnezia-box.git $revision
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot fetch pinned engine revision' }
+    # Long paths: deep vendor paths exceed MAX_PATH. autocrlf=false: keep upstream LF bytes so source patches match.
+    git -C $source -c core.longpaths=true -c core.autocrlf=false checkout -q FETCH_HEAD
+    if ($LASTEXITCODE -ne 0 -or (git -C $source rev-parse HEAD) -ne $revision) { throw 'Engine source does not match the pinned revision' }
+    Remove-Item -LiteralPath (Join-Path $source '.git') -Recurse -Force
 }
 $env:GOTOOLCHAIN = 'local'
 $env:GOWORK = 'off'
@@ -20,12 +24,13 @@ $env:GOARCH = 'amd64'
 $env:GOPATH = Join-Path $root '.tools/gopath'
 $env:GOCACHE = Join-Path $root '.tools/gocache'
 # Pin fixes reported by govulncheck; preserve them in the distributed corresponding source.
-& $Go get -C $source golang.org/x/net@v0.60.0 golang.org/x/crypto@v0.57.0 golang.org/x/text@v0.42.0
+& $Go get -C $source golang.org/x/net@v0.60.0 golang.org/x/crypto@v0.57.0 golang.org/x/text@v0.42.0 github.com/andybalholm/brotli@v1.2.7 github.com/klauspost/compress@v1.20.2
 if ($LASTEXITCODE -ne 0) { throw 'Cannot apply pinned Go dependency security updates' }
 # Official AWG endpoint formatter needs brackets for an IPv6 endpoint literal.
 $endpointFile = Join-Path $source 'protocol/awg/endpoint.go'
 $endpointText = [IO.File]::ReadAllText($endpointFile)
 $endpointText = $endpointText.Replace('peer.Address + ":" + format.ToString(peer.Port)', 'net.JoinHostPort(peer.Address, format.ToString(peer.Port))')
+if (!$endpointText.Contains('net.JoinHostPort(peer.Address, format.ToString(peer.Port))')) { throw 'Pinned AWG IPv6 endpoint patch no longer matches source' }
 [IO.File]::WriteAllText($endpointFile, $endpointText, [Text.UTF8Encoding]::new($false))
 $runFile = Join-Path $source 'cmd/sing-box/cmd_run.go'
 $runText = [IO.File]::ReadAllText($runFile)
@@ -126,7 +131,7 @@ Copy-Item -LiteralPath "$PSScriptRoot/engine/redroute_keepalive_test.go" -Destin
 if ($LASTEXITCODE -ne 0) { throw 'DNS crash durability checks failed' }
 & $Go test -C $source github.com/amnezia-vpn/amneziawg-go/v3/device -run '^(TestTwoDevicePing|TestAWGDevicePing|TestNoiseHandshake|TestConcurrencySafety|TestUpDown)$' -count=1 -timeout=90s
 if ($LASTEXITCODE -ne 0) { throw 'AWG packet and concurrency checks failed' }
-& $Go build -C $source -tags 'with_gvisor,with_quic,with_wireguard,with_awg' -trimpath -ldflags '-s -w -X github.com/sagernet/sing-box/constant.Version=1.260910.0-redroute8' -o "$destination/amnezia-box.exe" ./cmd/sing-box
+& $Go build -C $source -tags 'with_gvisor,with_quic,with_wireguard,with_awg' -trimpath -ldflags '-s -w -X github.com/sagernet/sing-box/constant.Version=1.260910.0-redroute9' -o "$destination/amnezia-box.exe" ./cmd/sing-box
 if ($LASTEXITCODE -ne 0) { throw 'VPN core build failed' }
 New-Item -ItemType Directory -Force "$root/artifacts/checks" | Out-Null
 & $Go build -C $source -trimpath -o "$root/artifacts/checks/redroute-lab-server.exe" "$root/tools/native-lab-server/main.go"

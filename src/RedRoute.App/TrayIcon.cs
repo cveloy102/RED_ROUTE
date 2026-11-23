@@ -13,7 +13,7 @@ internal static class TrayIcon
     {
         using var bitmap = new Bitmap(32, 32); using var g = Graphics.FromImage(bitmap);
         g.SmoothingMode = SmoothingMode.AntiAlias;
-        var lightTaskbar = forMenu ? !ThemeManager.IsDark : Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "SystemUsesLightTheme", 0) is int light && light == 1;
+        var lightTaskbar = forMenu ? !ThemeManager.IsDark : TaskbarIsLight();
         using var pen = new Pen(lightTaskbar ? Color.FromArgb(30, 30, 30) : Color.WhiteSmoke, 3) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
         if (phase is ConnectionPhase.Direct or ConnectionPhase.Error)
         {
@@ -25,5 +25,6 @@ internal static class TrayIcon
         else { g.DrawLine(pen, 16, 29, 16, 17); g.DrawLines(pen, [new Point(5, 6), new Point(5, 12), new Point(16, 20), new Point(27, 12), new Point(27, 6)]); g.DrawLines(pen, [new Point(1, 10), new Point(5, 5), new Point(10, 9)]); g.DrawLines(pen, [new Point(22, 9), new Point(27, 5), new Point(31, 10)]); }
         var handle = bitmap.GetHicon(); try { using var borrowed = Icon.FromHandle(handle); return (Icon)borrowed.Clone(); } finally { DestroyIcon(handle); }
     }
+    public static bool TaskbarIsLight() => Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "SystemUsesLightTheme", 0) is int light && light == 1;
     [DllImport("user32.dll")] private static extern bool DestroyIcon(IntPtr handle);
 }

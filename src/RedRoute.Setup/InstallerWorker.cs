@@ -20,8 +20,11 @@ internal sealed class InstallerWorker
     {
         total = position = 0; percent = 0;
         var owner = InstallOwner.Resolve();
-        var folder = Path.Combine(Path.GetTempPath(), "RED_ROUTE-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(folder); var msi = Path.Combine(folder, "RED_ROUTE.msi");
+        // The elevated installer must not read a package from the user's writable %TEMP%: another process of the
+        // same user could replace it before Windows Installer opens it. %WINDIR%\Temp does not let users delete or
+        // rename other accounts' folders, and this folder is created with an administrators-only ACL.
+        var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp", "RED_ROUTE-" + Guid.NewGuid().ToString("N"));
+        CreateProtectedFolder(folder); var msi = Path.Combine(folder, "RED_ROUTE.msi");
         var logs = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RED_ROUTE", "Installer"); Directory.CreateDirectory(logs);
         LogPath = Path.Combine(logs, "install-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".log");
         try
@@ -59,6 +62,19 @@ internal sealed class InstallerWorker
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* Temp cleanup must not turn a successful installation into an error. */ }
         }
+    }
+    internal static void CreateProtectedFolder(string folder)
+    {
+        var acl = new System.Security.AccessControl.DirectorySecurity();
+        acl.SetAccessRuleProtection(true, false);
+        foreach (var type in new[] { System.Security.Principal.WellKnownSidType.LocalSystemSid, System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid })
+            acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(new System.Security.Principal.SecurityIdentifier(type, null),
+                System.Security.AccessControl.FileSystemRights.FullControl,
+                System.Security.AccessControl.InheritanceFlags.ContainerInherit | System.Security.AccessControl.InheritanceFlags.ObjectInherit,
+                System.Security.AccessControl.PropagationFlags.None, System.Security.AccessControl.AccessControlType.Allow));
+        // The name contains a fresh GUID; never reuse a directory that somebody else already created.
+        if (Directory.Exists(folder)) throw new IOException("Временная папка установки уже существует.");
+        acl.CreateDirectory(folder);
     }
     private int OnMessage(IntPtr context, uint type, uint record)
     {

@@ -45,7 +45,10 @@ No physical adapter DNS, default gateway, proxy or third-party route is rewritte
 by C# code. FakeIP domain identity avoids routing unrelated shared-CDN IPs wholesale.
 
 DNS: local resolver for direct destinations/server bootstrap; DNS-over-HTTPS via
-VPN for VPN destinations. Endpoint hostnames are resolved before starting capture.
+VPN for VPN destinations. When the profile's `DNS` names a private resolver inside
+AllowedIPs (for example AmneziaDNS or 10.8.0.1), that resolver is used through the tunnel
+instead, so servers that block 1.1.1.1 keep working. Import rejects profiles whose
+AllowedIPs do not cover all public IPv4: health checks and DNS must traverse the tunnel. Endpoint hostnames are resolved before starting capture.
 The single-peer `AllowedIPs` remains authoritative; the client does not silently
 expand a server profile's cryptographic destinations. IPv4-only profiles prefer
 IPv4 DNS answers. Actual IPv6 acceptance needs live validation.

@@ -36,8 +36,11 @@ public partial class MainWindow
     private void Update_Click(object sender, RoutedEventArgs e)
     {
         if (availableUpdate == null) return;
+        var release = availableUpdate;
         var dialog = new UpdateDialog(this, availableUpdate, updater, file =>
         {
+            // Hold a write/delete-denying handle on the verified file until the elevated installer has started.
+            using var verified = GitHubUpdates.OpenVerified(file, release);
             using var process = Process.GetCurrentProcess();
             var info = new ProcessStartInfo(file) { UseShellExecute = true, Verb = "runas" };
             info.ArgumentList.Add("--update"); info.ArgumentList.Add("--parent-pid"); info.ArgumentList.Add(Environment.ProcessId.ToString());

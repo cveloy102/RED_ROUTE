@@ -33,9 +33,14 @@ public static partial class ConfParser
             if (line.Length == 0 || line[0] is '#' or ';') continue;
             if (line.StartsWith('['))
             {
-                if (line.Equals("[Interface]", StringComparison.OrdinalIgnoreCase) && !seenInterface) { seenInterface = true; current = iface; }
-                else if (line.Equals("[Peer]", StringComparison.OrdinalIgnoreCase) && !seenPeer) { seenPeer = true; current = peer; }
-                else throw new FormatException("Поддерживается один раздел Interface и один Peer в каждом файле.");
+                // Like wg-quick, ignore a trailing comment after a section header: "[Peer] # server".
+                var section = line.Split('#')[0].Trim();
+                var isInterface = section.Equals("[Interface]", StringComparison.OrdinalIgnoreCase);
+                var isPeer = section.Equals("[Peer]", StringComparison.OrdinalIgnoreCase);
+                if (isInterface && !seenInterface) { seenInterface = true; current = iface; }
+                else if (isPeer && !seenPeer) { seenPeer = true; current = peer; }
+                else if (isInterface || isPeer) throw new FormatException("Поддерживается один раздел Interface и один Peer в каждом файле.");
+                else throw new FormatException($"Неизвестный раздел {(section.Length > 40 ? section[..40] + "…" : section)}. Поддерживаются только [Interface] и [Peer].");
                 continue;
             }
             var equal = line.IndexOf('=');
@@ -59,7 +64,7 @@ public static partial class ConfParser
         foreach (var range in peer["AllowedIPs"].Split(',')) _ = Domains.NormalizeCidr(range);
         foreach (var (key, value) in iface)
         {
-            if (key.Equals("MTU", StringComparison.OrdinalIgnoreCase)) ValidateNumber(value, 1280, 9000, key);
+            if (key.Equals("MTU", StringComparison.OrdinalIgnoreCase)) ValidateNumber(value, 576, 9000, key);
             else if (key.Equals("ListenPort", StringComparison.OrdinalIgnoreCase)) ValidateNumber(value, 0, 65535, key);
             else if (new[] { "Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4" }.Contains(key, StringComparer.OrdinalIgnoreCase)) ValidateNumber(value, 0, 65535, key);
             else if (key.Length == 2 && key[0] is 'H' or 'h' && "1234".Contains(key[1]))
@@ -83,6 +88,9 @@ public static partial class ConfParser
             var maximum = iface.TryGetValue("Jmax", out var jmax) ? int.Parse(jmax) : 0;
             if (minimum > maximum) throw new FormatException("Jmin не должен быть больше Jmax.");
         }
+        // IPv4 allows a small MTU; IPv6 requires at least 1280.
+        if (iface.TryGetValue("MTU", out var mtu) && int.Parse(mtu) < 1280 && parsed.Addresses.Any(a => a.Contains(':')))
+            throw new FormatException("MTU меньше 1280 недопустим для профиля с IPv6-адресом.");
         if (peer.TryGetValue("PersistentKeepalive", out var keep)) _ = ParseKeepalive(keep, parsed.IsAmnezia);
         return parsed;
     }
