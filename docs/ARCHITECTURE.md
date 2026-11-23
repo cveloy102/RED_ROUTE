@@ -37,8 +37,11 @@ bounded events, not raw engine logs. New configure/recover cancels the previous
 operation; one serialized gate protects engine ownership.
 
 AWG is an in-process userspace network endpoint inside the core (`useIntegratedTun=false`);
-the only system TUN is the routing inbound. It uses `auto_route=true`,
-`strict_route=false`; no kill switch or persistent firewall policy is installed.
+the only system TUN is the routing inbound. It uses `auto_route=true`. In On mode it
+also sets `strict_route=true`: dynamic-session WFP filters block DNS (port 53) outside the
+TUN for every process except the core, preventing Windows' multihomed resolver from
+querying the ISP's DNS. Windows removes the dynamic filters when the core exits, so no
+persistent firewall policy or kill switch remains. Auto keeps `strict_route=false`.
 Windows Job Object kill-on-close owns the child core, so a service crash releases
 TUN handles. Normal stop and recovery also clear the Windows DNS resolver cache.
 No physical adapter DNS, default gateway, proxy or third-party route is rewritten

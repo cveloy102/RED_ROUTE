@@ -59,7 +59,8 @@ Assert(physicalDns["dns"]!["servers"]![0]!["bind_interface"]!.GetValue<string>()
 Assert(generated["endpoints"]![0]!["useIntegratedTun"]!.GetValue<bool>() == false, "AWG probe never installs a second system tunnel");
 Assert(generated["route"]!["rules"]![1]!["outbound"]!.GetValue<string>() == "vpn", "Health proxy always traverses VPN");
 Assert(generated["route"]!["rules"]![0]!["action"]!.GetValue<string>() == "resolve", "AWG health resolves DNS before userspace dialing");
-Assert(generated["inbounds"]![1]!["strict_route"]!.GetValue<bool>() == false, "No kill switch");
+Assert(generated["inbounds"]![1]!["strict_route"]!.GetValue<bool>() == false, "Auto installs no DNS/WFP filters");
+Assert(CoreConfiguration.Build(parsed, new ClientSettings { Mode = RouteMode.On, Profiles = settings.Profiles }, true, 12345, "secret")["inbounds"]![1]!["strict_route"]!.GetValue<bool>(), "On blocks DNS outside the tunnel (no ISP DNS leak)");
 Assert(CoreConfiguration.Build(parsed, settings, false, 12345, "secret")["inbounds"]!.AsArray().Count == 1, "Candidate check installs no capture routes");
 settings.Mode = RouteMode.On;
 Assert(CoreConfiguration.Build(parsed, settings, true, 12345, "secret")["route"]!["final"]!.GetValue<string>() == "vpn", "On uses VPN default");
