@@ -1,12 +1,26 @@
 # RED_ROUTE
 
-Нативный VPN-клиент для **Windows 10 22H2 / Windows 11 x64**. C# / .NET 10 / WPF,
-служба Windows и встроенное официальное ядро Amnezia. Название режима всегда
-сопровождается объяснением.
+Клиент VPN для **Windows 10 22H2 или Windows 11 x64**. Подключает весь компьютер или только выбранные сайты. Понадобится ваш профиль AmneziaWG или WireGuard в файле `.conf`.
 
-[Скачать EXE](https://github.com/cveloy102/RED_ROUTE/releases/download/v1.0.1/RED_ROUTE-1.0.1-Setup.exe) · [Скачать MSI](https://github.com/cveloy102/RED_ROUTE/releases/download/v1.0.1/RED_ROUTE-1.0.1-win-x64.msi) · [Страница приложения](https://cveloy102.github.io/red-route/)
+**[Скачать установщик Windows (EXE)](https://github.com/cveloy102/RED_ROUTE/releases/download/v1.0.1/RED_ROUTE-1.0.1-Setup.exe)** · [MSI для автоматизированной установки](https://github.com/cveloy102/RED_ROUTE/releases/download/v1.0.1/RED_ROUTE-1.0.1-win-x64.msi) · [Страница приложения](https://cveloy102.github.io/red-route/)
 
-<img src="docs/images/main.png" width="520" alt="Главное окно RED_ROUTE с тремя режимами подключения">
+## Первый запуск
+
+1. Запустите установщик, подтвердите запрос Windows и откройте RED_ROUTE из меню «Пуск».
+2. В разделе **«Профили»** добавьте свой файл `.conf`.
+3. Выберите **«Вкл»** и дождитесь результата проверки соединения в главном окне. Для отдельных сайтов добавьте их в список и выберите **«Авто»**.
+
+<img src="docs/images/main.png" width="480" alt="Главное окно RED_ROUTE с режимами Вкл, Выкл и Авто">
+
+## Если не получилось
+
+При ошибке импорта прочитайте пояснение в окне выбора профиля. Если после подключения пропал интернет, откройте [инструкцию по восстановлению](#разрешения-и-восстановление). При одновременной работе двух клиентов пригодится раздел [«Другие VPN»](#другие-vpn).
+
+[Сообщить об ошибке](https://github.com/cveloy102/RED_ROUTE/issues/new) · [Все версии](https://github.com/cveloy102/RED_ROUTE/releases)
+
+## Режимы и возможности
+
+Приложение использует WPF, .NET 10, службу Windows и встроенное ядро Amnezia.
 
 - **Вкл** — весь публичный интернет через VPN; локальная сеть остаётся доступна.
 - **Выкл** — туннель остановлен, обычный интернет напрямую.
